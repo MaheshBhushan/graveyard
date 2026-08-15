@@ -2,12 +2,12 @@
 // mk-fleet CLI: durable work queue plus the `dispatch` entry point, which
 // launches one worktree-isolated agent session per queued job (src/dispatch.ts).
 //
-// Usage:
-//   bun run src/cli.ts add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]
-//   bun run src/cli.ts add --from-gh <owner/name> [--label <l>] [--limit <n>]
-//   bun run src/cli.ts list [--state <s>] [--json]
-//   bun run src/cli.ts status
-//   bun run src/cli.ts dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
+// Usage (via the `gm` launcher in bin/gm, or `bun run src/cli.ts` directly):
+//   gm add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]
+//   gm add --from-gh <owner/name> [--label <l>] [--limit <n>]
+//   gm list [--state <s>] [--json]
+//   gm status
+//   gm dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
 //
 // dispatch is INERT by default: without --live it launches a no-op instead of a
 // real agent, so a mistyped command costs nothing. --live is what spends tokens.
@@ -182,7 +182,7 @@ switch (subcommand) {
     await runDispatch(db);
     break;
   default:
-    console.error("usage: mk-fleet <add|list|status|dispatch> [flags]");
+    console.error("usage: gm <add|list|status|dispatch> [flags]");
     console.error(
       "  dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>] [--repos-dir <path>]",
     );

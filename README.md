@@ -9,8 +9,8 @@ throwaway checkout, each stopping short of anything you can't take back.
 Nothing is pushed. Nothing is opened upstream. Every public action is still yours.
 
 ```
-$ graveyard add --from-gh Textualize/rich
-$ graveyard dispatch --live --wip 2
+$ gm add --from-gh Textualize/rich
+$ gm dispatch --live --wip 2
 ```
 
 ```
@@ -118,6 +118,20 @@ No npm dependencies — SQLite comes from `bun:sqlite`.
 git clone https://github.com/MaheshBhushan/graveyard
 cd graveyard
 bun test
+ln -s "$PWD/bin/gm" ~/.local/bin/gm     # the `gm` shortcut
+```
+
+`bin/gm` resolves through the symlink, so the repo can live anywhere and `gm`
+works from any directory:
+
+```
+$ gm status
+queued   5
+running  0
+done     2
+failed   0
+blocked  0
+total    7
 ```
 
 `dispatch` is **inert without `--live`**: it launches a no-op instead of a real

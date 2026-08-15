@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# graveyard launcher. Install by symlinking this onto PATH:
+#
+#   ln -s /path/to/graveyard/bin/gm ~/.local/bin/gm
+#
+# Resolves through the symlink so the repo can live anywhere, including a
+# path with spaces in it.
+set -euo pipefail
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *)  self=$(dirname "$self")/$target ;;
+  esac
+done
+root=$(cd "$(dirname "$self")/.." && pwd)
+
+exec bun run "$root/src/cli.ts" "$@"
