@@ -31,6 +31,48 @@ $ gm dispatch --live --wip 2
  `- 2 done
 ```
 
+## Watching it
+
+```
+$ gm watch
+```
+
+```
+╭─ graveyard ────────────────────────────────────╮
+│  wip 1/3   queued 4   done 3   go 1   no-go 1  │
+╰────────────────────────────────────────────────╯
+
+❯ ⏺ rich#4196  [BUG] Line breaking breaks at NBSP (U+00A0)…      GO      2m41s
+  ○ rich#4192  [BUG] Live outputs different amounts of newlines…  ·
+  ✔ rich#4199  Fix ambiguous-width character handling for CJK…   NO-GO   1m09s
+  ✔ rich#4207  [BUG] `Live`s don't get refreshed after first run…  ·     13m24s
+
+ │ verdict     NO-GO
+ │ reason      Undecided design question, not a defect. The reporter asked
+ │             maintainers for direction and no maintainer has replied.
+ │ blockers    maintainer-has-not-decided; not-actually-a-bug
+ │ effort      heavy
+
+ Textualize__rich-4199/agent.log ──────────────────────────────────────────
+   Outcome: NO-GO (Phase 0 gate). No branch pushed, no PR opened.
+
+ ↑↓ select   l log/record   space pause   r refresh   q quit
+```
+
+The verdict column is the point. ferb's Phase 0 decides whether an issue is worth
+acting on at all, and that decision is the most interesting thing the fleet
+produces — more so than the diffs, because a decline costs ~$2 and a wrong PR
+costs a maintainer's afternoon.
+
+To make it visible *while a job runs* rather than only in the final report, the
+dispatch prompt tells the agent to write its verdict block to `phase0.md` the
+moment Phase 0 decides, before it does anything else. `watch` polls that file and
+falls back to parsing the run record for jobs that predate it.
+
+`l` toggles the bottom pane between the live `agent.log` and the finished run
+record. Elapsed time is measured from launch to when `reconcile` *observed* the
+job finish, so with the timer running it can overstate by up to one tick.
+
 ## Why
 
 Because half of "agent working" is actually "agent waiting on a human."
@@ -229,6 +271,7 @@ src/queue.ts       durable job queue
 src/dispatch.ts    worktrees, tmux launch, reconcile, diff ceilings
 src/recover.ts     stall classification and resume decisions
 src/render.ts      terminal rendering (pure, snapshot-tested)
+src/watch.ts       live TUI: phase 0 verdicts + log pane (pure half tested)
 analysis/          the go/no-go gate, and the first live run
 ```
 

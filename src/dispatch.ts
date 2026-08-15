@@ -6,10 +6,11 @@
 //   bun run src/dispatch.ts [--wip <n>] [--max-jobs <n>] [--dry-run]
 //                           [--repo <owner/name>] [--repos-dir <path>] [--db <path>]
 //
-// This file deliberately contains NO code path that pushes, opens a PR, or
-// comments anywhere upstream -- see the HARD RULE in prompts/dispatch-agent.md.
-// A run ends at a local commit on a worktree branch plus a drafted PR body in
-// a local file, for human review. Do not add one.
+// This file itself still contains no code that pushes, opens a PR, or comments
+// upstream -- but that is no longer a property of the system. The prompt it
+// renders delegates to the `ferb` skill, whose final phase pushes to a fork,
+// opens the PR, and comments on the issue. The dispatcher is not the brake any
+// more; ferb's Phase 0 gate is. See prompts/dispatch-agent.md.
 
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -360,6 +361,7 @@ interface Plan {
   promptPath: string;
   logPath: string;
   prDraftPath: string;
+  phase0Path: string;
   tmux: string;
   shellCmd: string;
 }
@@ -378,6 +380,7 @@ function renderPrompt(plan: Plan): string {
     MAX_FILES: String(cfg.max_files_changed),
     MAX_LINES: String(cfg.max_lines_changed),
     PR_DRAFT_PATH: plan.prDraftPath,
+    PHASE0_PATH: plan.phase0Path,
   };
   let text = readFileSync(PROMPT_TEMPLATE_PATH, "utf8");
   for (const [k, v] of Object.entries(subs)) text = text.replaceAll(`{{${k}}}`, v);
@@ -668,6 +671,10 @@ async function buildPlan(job: DispatchJob, reposDir: string, live: boolean): Pro
   const promptPath = join(rd, "prompt.md");
   const logPath = join(rd, "agent.log");
   const prDraftPath = join(rd, "pr-draft.md");
+  // Written by the agent the moment ferb Phase 0 decides, long before the run
+  // record exists. `gm watch` reads it to show a live verdict per job; without
+  // it a GO and a NO-GO look identical until the whole run ends.
+  const phase0Path = join(rd, "phase0.md");
   const plan: Plan = {
     job,
     cfg,
@@ -678,6 +685,7 @@ async function buildPlan(job: DispatchJob, reposDir: string, live: boolean): Pro
     promptPath,
     logPath,
     prDraftPath,
+    phase0Path,
     tmux: tmuxName(job.job_id),
     shellCmd: "",
   };

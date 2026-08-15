@@ -8,6 +8,7 @@
 //   gm list [--state <s>] [--json]
 //   gm status
 //   gm dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
+//   gm watch [--interval <seconds>] [--wip <n>]
 //
 // dispatch is INERT by default: without --live it launches a no-op instead of a
 // real agent, so a mistyped command costs nothing. --live is what spends tokens.
@@ -21,6 +22,7 @@ import { dirname, join } from "node:path";
 import { readBugLabels, runDispatch } from "./dispatch.ts";
 import { addJob, countByState, listJobs, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
+import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
 
 // Matches backfill.ts's hand-rolled flag parsing style.
@@ -32,7 +34,9 @@ function argVal(flag: string): string | null {
 const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", "fleet.sqlite");
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
-const subcommand = process.argv.slice(2).find((a) => ["add", "list", "status", "dispatch"].includes(a));
+const subcommand = process.argv.slice(2).find((a) =>
+  ["add", "list", "status", "dispatch", "watch"].includes(a),
+);
 
 mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -181,8 +185,20 @@ switch (subcommand) {
   case "dispatch":
     await runDispatch(db);
     break;
+  case "watch": {
+    const intervalArg = argVal("--interval");
+    const wipArg = argVal("--wip");
+    await runWatch(db, {
+      wip: wipArg ? Number(wipArg) : 3,
+      intervalMs: intervalArg ? Number(intervalArg) * 1000 : 1000,
+      theme: resolveTheme(),
+      height: process.stdout.rows ?? 24,
+    });
+    break;
+  }
   default:
-    console.error("usage: gm <add|list|status|dispatch> [flags]");
+    console.error("usage: gm <add|list|status|dispatch|watch> [flags]");
+    console.error("  watch [--interval <seconds>]  live view: per-job phase 0 verdict + logs");
     console.error(
       "  dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>] [--repos-dir <path>]",
     );

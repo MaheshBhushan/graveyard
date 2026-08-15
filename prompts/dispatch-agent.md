@@ -69,7 +69,30 @@ the issue comment. Author and committer are the repo's configured git user.
 Before pushing, run `git log -1 --format='%an %ae%n%B'` and confirm it is clean;
 if a trailer slipped in, `git commit --amend` and strip it.
 
-## Addendum 5: finish by writing the run record
+## Addendum 5: publish your Phase 0 verdict the moment you have it
+
+The instant ferb Phase 0 produces its verdict — before Phase 1, before any
+clone, install, or edit — write the verdict block to this exact path:
+
+{{PHASE0_PATH}}
+
+Write it verbatim in ferb's own format, nothing else in the file:
+
+```
+Issue: <repo>#<N> - <title>
+Verdict: GO | NO-GO | ASK
+Reason: <one or two sentences>
+Blockers: <list, or none>
+Est. effort: <trivial | moderate | heavy>
+Confidence a correct fix is achievable and verifiable here: <low | med | high>
+```
+
+Do this even when the verdict is GO and you are about to continue. A human
+watching `gm watch` sees this file and nothing else until you finish, so it is
+the only way for them to know why a job is proceeding or why it stopped. Writing
+it is not optional and it is not the same as the run record below.
+
+## Addendum 6: finish by writing the run record
 
 When you are done — whichever way it ended — write your report to this exact
 path, last:
