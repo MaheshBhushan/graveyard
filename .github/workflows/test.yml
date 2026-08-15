@@ -1,0 +1,17 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # No install step: there are no runtime dependencies, and SQLite comes
+      # from bun:sqlite. Leaving `bun install` out means a runtime dependency
+      # creeping in fails here instead of being quietly installed.
+      - run: bun test

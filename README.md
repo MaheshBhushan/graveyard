@@ -2,10 +2,11 @@
 <p align="center">Runs the graveyard shift so you don't have to.</p>
 
 <p align="center">
+  <a href="https://github.com/MaheshBhushan/graveyard/actions/workflows/test.yml"><img alt="tests" src="https://github.com/MaheshBhushan/graveyard/actions/workflows/test.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/MaheshBhushan/graveyard"></a>
   <a href="https://github.com/MaheshBhushan/graveyard/commits/main"><img alt="last commit" src="https://img.shields.io/github/last-commit/MaheshBhushan/graveyard"></a>
   <a href="https://bun.sh"><img alt="runtime" src="https://img.shields.io/badge/runtime-bun-black"></a>
-  <img alt="dependencies" src="https://img.shields.io/badge/npm%20deps-0-brightgreen">
+  <img alt="runtime dependencies" src="https://img.shields.io/badge/runtime%20deps-0-brightgreen">
 </p>
 
 <p align="center">
@@ -185,8 +186,9 @@ else and the check is skipped.
 ## Install
 
 Needs [Bun](https://bun.sh), `git`, `tmux`, an authenticated `gh`, an agent CLI on
-`PATH`, and the [`ferb` skill](#skill-dependency-ferb). No npm dependencies —
-SQLite comes from `bun:sqlite`.
+`PATH`, and the [`ferb` skill](#skill-dependency-ferb). No runtime dependencies
+and no install step — SQLite comes from `bun:sqlite`, and the only devDependency
+is `@types/bun`.
 
 ```bash
 git clone https://github.com/MaheshBhushan/graveyard
