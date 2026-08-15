@@ -147,11 +147,12 @@ jobs recorded `approval_wait_ms = 0`, which is the entire thesis.
 
 **What isn't.**
 
-- **The shipping configuration has never run.** `analysis/run-01.md` was produced
-  under the earlier design, where agents stopped at a local commit and a drafted
-  PR body. The `ferb` delegation, the fork push, `gh pr create`, and the issue
-  comment are wired but have **not** executed live even once. Every claim below
-  about the scheduler is measured; nothing about the shipping path is.
+- **The shipping path has still never executed.** The ferb delegation has run live
+  once ([`analysis/run-02.md`](analysis/run-02.md)) and correctly returned NO-GO at
+  Phase 0 — nothing pushed, nothing posted, verified against GitHub. So the gate is
+  demonstrated, but fork creation, `git push`, `gh pr create`, and the issue
+  comment are wired and reviewed and have **never run once**. That run tested the
+  brake, not the engine.
 - **The failure-handling half has never run.** Stall detection, resume, and the
   "out of credit, waiting won't help, wake a human" branch have fired exactly
   zero times against reality. They're tested against replayed transcripts only.
