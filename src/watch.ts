@@ -38,13 +38,26 @@ export interface Phase0Verdict {
 
 const VERDICT_LINE = /^\s*(?:\*\*)?Verdict(?:\*\*)?\s*:\s*(?:\*\*)?\s*(GO|NO-GO|NOGO|ASK)\b/im;
 
+// A field value continues onto following lines when they are indented and do
+// not open a new `Label:` of their own -- ferb wraps long Reason values that
+// way, and reading only the first line truncated them mid-sentence.
+const NEW_FIELD = /^\s*(?:[-*]\s*)?(?:\*\*)?[A-Za-z][A-Za-z. ]{0,30}(?:\*\*)?\s*:/;
+
 function field(text: string, label: string): string | null {
   // Tolerant of the markdown the agent tends to add around ferb's plain format
   // (bold labels, a fenced block, a leading list marker).
-  const re = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${label}(?:\\*\\*)?\\s*:\\s*(.+)$`, "im");
+  const re = new RegExp(`^\\s*(?:[-*]\\s*)?(?:\\*\\*)?${label}(?:\\*\\*)?\\s*:\\s*(.*)$`, "im");
   const m = text.match(re);
   if (!m) return null;
-  const v = m[1].replace(/\*\*/g, "").trim();
+
+  const lines = text.slice(m.index! + m[0].length).split("\n").slice(1);
+  const parts = [m[1]];
+  for (const line of lines) {
+    if (!/^\s+\S/.test(line) || NEW_FIELD.test(line)) break;
+    parts.push(line);
+  }
+
+  const v = parts.join(" ").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
   return v === "" ? null : v;
 }
 

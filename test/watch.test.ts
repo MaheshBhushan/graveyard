@@ -68,6 +68,21 @@ describe("parseVerdict", () => {
     expect(v?.reason).toBe("small, reproducible");
   });
 
+  test("keeps a value that ferb wrapped onto indented continuation lines", () => {
+    // Reading only the first line silently truncated reason mid-sentence and
+    // dropped three of four blockers -- caught by rendering the real run 02.
+    const v = parseVerdict(REAL_NOGO);
+    expect(v?.reason).toContain("no maintainer has replied");
+    expect(v?.blockers).toContain("not-actually-a-bug");
+    expect(v?.reason).not.toContain("\n");
+  });
+
+  test("a continuation stops at the next label rather than swallowing it", () => {
+    const v = parseVerdict("Verdict: GO\nReason: small\n        and safe\nEst. effort: trivial");
+    expect(v?.reason).toBe("small and safe");
+    expect(v?.effort).toBe("trivial");
+  });
+
   test("returns null while phase 0 is still undecided", () => {
     expect(parseVerdict("")).toBeNull();
     expect(parseVerdict("# rich#4199\n\nreading the issue thread...")).toBeNull();

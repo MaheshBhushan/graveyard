@@ -41,6 +41,40 @@ export function jobId(repo: string, issueNumber: number | null | undefined): str
   return issueNumber != null ? `${slug}-${issueNumber}` : slug;
 }
 
+export interface IssueRef {
+  repo: string;
+  issue_number: number;
+  url: string;
+}
+
+// Accept the thing a human actually has in their clipboard. `gm add <url>`
+// beats reconstructing --repo/--issue by hand from a browser tab.
+//
+// Understood: a github.com issue or PR URL (with or without scheme, trailing
+// slash, #anchor or ?query), and the short `owner/name#42` form.
+export function parseIssueRef(input: string): IssueRef | null {
+  const s = input.trim();
+
+  const short = s.match(/^([\w.-]+\/[\w.-]+)#(\d+)$/);
+  if (short) {
+    const n = Number(short[2]);
+    return n > 0
+      ? { repo: short[1], issue_number: n, url: `https://github.com/${short[1]}/issues/${n}` }
+      : null;
+  }
+
+  // A PR URL is accepted deliberately: someone pasting one means that number,
+  // and gh resolves both under the same numbering.
+  const url = s.match(
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+)\/(?:issues|pull)\/(\d+)/i,
+  );
+  if (!url) return null;
+  const n = Number(url[3]);
+  if (!(n > 0)) return null;
+  const repo = `${url[1]}/${url[2].replace(/\.git$/, "")}`;
+  return { repo, issue_number: n, url: `https://github.com/${repo}/issues/${n}` };
+}
+
 export interface AddResult {
   job_id: string;
   inserted: boolean;

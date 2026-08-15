@@ -3,6 +3,7 @@
 // launches one worktree-isolated agent session per queued job (src/dispatch.ts).
 //
 // Usage (via the `gm` launcher in bin/gm, or `bun run src/cli.ts` directly):
+//   gm add <issue-url | owner/name#n> [--title <s>] [--priority <n>]
 //   gm add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]
 //   gm add --from-gh <owner/name> [--label <l>] [--limit <n>]
 //   gm list [--state <s>] [--json]
@@ -20,7 +21,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readBugLabels, runDispatch } from "./dispatch.ts";
-import { addJob, countByState, listJobs, type JobState } from "./queue.ts";
+import { addJob, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
@@ -48,7 +49,61 @@ db.exec(readFileSync(schemaPath, "utf8"));
 
 // ---- subcommands -------------------------------------------------------------
 
+// The first bare (non-flag, non-flag-value) word after `add`, if any. That is
+// where a pasted issue URL lands.
+function positionalAfter(subcmd: string): string | null {
+  const start = process.argv.indexOf(subcmd);
+  if (start < 0) return null;
+  for (let i = start + 1; i < process.argv.length; i++) {
+    const a = process.argv[i];
+    if (a.startsWith("-")) continue;
+    if (process.argv[i - 1]?.startsWith("-") && process.argv[i - 1] !== subcmd) continue;
+    return a;
+  }
+  return null;
+}
+
+// Best-effort title lookup so a URL-added job reads like a gh-added one. A
+// failure here is not fatal: the job is still queueable without a title.
+async function fetchIssueTitle(repo: string, issue: number): Promise<string | null> {
+  const proc = Bun.spawn(["gh", "issue", "view", String(issue), "--repo", repo, "--json", "title"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  if (code !== 0) return null;
+  try {
+    return JSON.parse(out).title ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function cmdAdd(): Promise<void> {
+  const bare = positionalAfter("add");
+  if (bare) {
+    const ref = parseIssueRef(bare);
+    if (!ref) {
+      console.error(`not a GitHub issue reference: ${bare}`);
+      console.error("expected https://github.com/<owner>/<name>/issues/<n> or <owner>/<name>#<n>");
+      process.exitCode = 1;
+      return;
+    }
+    const title = argVal("--title") ?? (await fetchIssueTitle(ref.repo, ref.issue_number));
+    const priorityStr = argVal("--priority");
+    const res = addJob(db, {
+      repo: ref.repo,
+      issue_number: ref.issue_number,
+      title,
+      task_source: "url",
+      url: ref.url,
+      priority: priorityStr ? Number(priorityStr) : 0,
+    });
+    const shown = title ? ` ${title}` : "";
+    console.log(`${res.job_id}${shown} -> ${res.inserted ? "queued" : "already present"}`);
+    return;
+  }
+
   const fromGh = argVal("--from-gh");
   if (fromGh) {
     const repo = fromGh;
@@ -123,7 +178,9 @@ async function cmdAdd(): Promise<void> {
   const repo = argVal("--repo");
   const issueStr = argVal("--issue");
   if (!repo || !issueStr) {
-    console.error("usage: add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]");
+    console.error("usage: add <issue-url | owner/name#n> [--title <s>] [--priority <n>]");
+    console.error("       add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]");
+    console.error("       add --from-gh <owner/name> [--label <l>] [--limit <n>]");
     process.exitCode = 1;
     return;
   }
