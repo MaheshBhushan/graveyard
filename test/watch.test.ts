@@ -3,7 +3,18 @@
 // project has hit came from testing against tidy synthetic input.
 
 import { describe, expect, test } from "bun:test";
-import { parseVerdict, renderVerdictPane, renderWatchRows, type WatchJob, type WatchModel } from "../src/watch.ts";
+import {
+  clampScroll,
+  followSelection,
+  parseVerdict,
+  renderLogPane,
+  renderVerdictPane,
+  hints,
+  renderWatchRows,
+  scrollbar,
+  type WatchJob,
+  type WatchModel,
+} from "../src/watch.ts";
 import type { Theme } from "../src/theme.ts";
 
 const ASCII: Theme = { color: false, unicode: false, width: 80 };
@@ -43,7 +54,19 @@ function job(over: Partial<WatchJob> = {}): WatchJob {
 }
 
 function model(over: Partial<WatchModel> = {}): WatchModel {
-  return { jobs: [job()], selected: 0, logTail: "", logSource: "x", wip: 3, paused: false, ...over };
+  return {
+    jobs: [job()],
+    selected: 0,
+    rowOffset: 0,
+    rowViewport: 20,
+    logTail: "",
+    logOffset: null,
+    logViewport: 10,
+    logSource: "x",
+    wip: 3,
+    paused: false,
+    ...over,
+  };
 }
 
 describe("parseVerdict", () => {
@@ -118,6 +141,85 @@ describe("renderWatchRows", () => {
 
   test("empty fleet says so rather than rendering nothing", () => {
     expect(renderWatchRows(model({ jobs: [] }), Date.now(), ASCII)).toContain("no jobs");
+  });
+});
+
+describe("scrolling", () => {
+  test("clampScroll never scrolls past the last full screen", () => {
+    expect(clampScroll(99, 30, 10)).toBe(20);
+    expect(clampScroll(-5, 30, 10)).toBe(0);
+    expect(clampScroll(5, 8, 10)).toBe(0); // everything already fits
+  });
+
+  test("followSelection moves by one at the edges and not at all inside", () => {
+    expect(followSelection(5, 0, 10)).toBe(0); // already visible
+    expect(followSelection(10, 0, 10)).toBe(1); // stepped past the bottom
+    expect(followSelection(3, 7, 10)).toBe(3); // jumped above the top
+  });
+
+  test("the bar is one glyph per visible row, and blank when nothing scrolls", () => {
+    expect(scrollbar(8, 0, 10, ASCII)).toEqual(Array(10).fill(" "));
+    const bar = scrollbar(100, 0, 10, ASCII);
+    expect(bar).toHaveLength(10);
+    expect(bar.join("")).toMatch(/^#+\|+$/); // thumb at the top
+    expect(scrollbar(100, 90, 10, ASCII).join("")).toMatch(/^\|+#+$/); // and at the bottom
+  });
+
+  test("the job list is a window, not the whole list", () => {
+    const jobs = Array.from({ length: 40 }, (_, i) => job({ job_id: `j${i}`, issue_number: 4000 + i }));
+    const out = renderWatchRows(model({ jobs, selected: 39, rowOffset: 30, rowViewport: 10 }), Date.now(), ASCII);
+    const lines = out.split("\n");
+    expect(lines).toHaveLength(10);
+    expect(out).toContain("rich#4039");
+    expect(out).not.toContain("rich#4029");
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(ASCII.width);
+  });
+
+  test("rows still fit once the gutter is added, at every width", () => {
+    const jobs = Array.from({ length: 30 }, (_, i) => job({ job_id: `j${i}`, title: "x".repeat(300) }));
+    for (const width of [20, 40, 80, 120]) {
+      const out = renderWatchRows(model({ jobs, rowViewport: 10 }), Date.now(), { ...ASCII, width });
+      for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(width);
+    }
+  });
+});
+
+describe("renderLogPane", () => {
+  const long = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+
+  test("a null offset sticks to the newest line", () => {
+    const out = renderLogPane(model({ logTail: long, logOffset: null, logViewport: 5 }), ASCII);
+    expect(out).toContain("line 99");
+    expect(out).not.toContain("line 94");
+    expect(out).toContain("96-100/100");
+  });
+
+  test("scrolling up shows older lines and says where you are", () => {
+    const out = renderLogPane(model({ logTail: long, logOffset: 0, logViewport: 5 }), ASCII);
+    expect(out).toContain("line 0");
+    expect(out).not.toContain("line 99");
+    expect(out).toContain("1-5/100");
+  });
+
+  test("a trailing newline is not counted as a line you can scroll to", () => {
+    const out = renderLogPane(model({ logTail: "a\nb\n", logOffset: null, logViewport: 5 }), ASCII);
+    expect(out).not.toContain("3/");
+    expect(out).toContain("b");
+  });
+
+  test("no position readout when the whole log already fits", () => {
+    expect(renderLogPane(model({ logTail: "a\nb", logViewport: 20 }), ASCII)).not.toContain("/2");
+  });
+});
+
+describe("hints", () => {
+  test("fit the terminal at every width, dropping the least useful first", () => {
+    for (const width of [20, 40, 76, 80, 120]) {
+      const line = hints({ ...ASCII, width });
+      expect(line.length).toBeLessThanOrEqual(width);
+      expect(line).toContain("select"); // the one hint that always survives
+    }
+    expect(hints({ ...ASCII, width: 120 })).toContain("q quit");
   });
 });
 

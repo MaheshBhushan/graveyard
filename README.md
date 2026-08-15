@@ -133,6 +133,13 @@ record. Elapsed time is measured from launch to when `reconcile` *observed* the
 job finish, so with the timer running it can overstate by up to one tick — which
 is why two unrelated jobs both read `15m12s` above.
 
+**Scrolling.** The view runs on the alternate screen, so the terminal's own
+scrollback is gone while it's open — both panes scroll themselves instead. The
+job list is a window that follows the selection; the log pane takes the mouse
+wheel, `PgUp`/`PgDn`, and `g`/`G` for top and end. Each has a gutter showing
+where you are, and the log sticks to its newest line until you deliberately
+scroll away — `G` re-attaches it. Both panes resize with the terminal.
+
 ## Honest status
 
 The scheduler works end to end, at n=2. Write-ups:
@@ -193,7 +200,7 @@ is `@types/bun`.
 ```bash
 git clone https://github.com/MaheshBhushan/graveyard
 cd graveyard
-bun test                                 # 35 tests, no install step
+bun test                                 # 46 tests, no install step
 ln -s "$PWD/bin/gm" ~/.local/bin/gm      # must be on your PATH
 ```
 
@@ -248,7 +255,7 @@ src/dispatch.ts        worktrees, tmux launch, reconcile, diff ceilings
 src/recover.ts         stall classification and resume decisions
 src/render.ts          terminal rendering (pure, snapshot-tested)
 src/watch.ts           live TUI: phase 0 verdicts + log pane
-test/                  35 tests over the pure renderers, parsers and refs
+test/                  46 tests over the pure renderers, parsers and refs
 analysis/              the go/no-go gate, and the two live runs
 ```
 

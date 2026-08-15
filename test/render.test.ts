@@ -113,6 +113,19 @@ describe("renderFleetBox", () => {
     const box = renderFleetBox("wip 2/3   parked 1   queued 4", { ...plain, width: 20 });
     for (const line of box.split("\n")) expect(cells(line)).toBeLessThanOrEqual(20);
   });
+
+  test("content too long for the box is truncated, not hung off the edge", () => {
+    // Between MIN_BOX_WIDTH and the content length the box used to draw its
+    // border at the theme width while letting the summary line overrun it.
+    // Width 20 misses this: it takes the no-box bail-out instead.
+    const long = "  wip 0/3   queued 9   done 9   go 0   no-go 9";
+    for (const width of [30, 40, 45]) {
+      const box = renderFleetBox(long, { ...plain, width });
+      const lines = box.split("\n");
+      for (const line of lines) expect(cells(line)).toBeLessThanOrEqual(width);
+      expect(new Set(lines.map(cells)).size).toBe(1); // border and content agree
+    }
+  });
 });
 
 describe("renderFooter", () => {

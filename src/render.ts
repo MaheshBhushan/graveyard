@@ -238,6 +238,9 @@ const MIN_BOX_WIDTH = 24;
 export function renderFleetBox(content: string, theme: Theme, title = "fleet"): string {
   const boxWidth = Math.max(MIN_BOX_WIDTH, Math.min(theme.width, Math.max(cells(content) + 4, 30)));
   const inner = boxWidth - 2;
+  // The border is capped at theme.width but the content was not, so a long
+  // summary line used to hang off the right-hand edge of its own box.
+  content = truncate(content, inner, theme);
 
   if (theme.width < MIN_BOX_WIDTH) {
     return truncate(content.trim(), theme.width, theme);
