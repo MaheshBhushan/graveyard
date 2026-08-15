@@ -157,6 +157,13 @@ describe("scrolling", () => {
     expect(followSelection(3, 7, 10)).toBe(3); // jumped above the top
   });
 
+  test("a truncated job list says how many rows are below the fold", () => {
+    const jobs = Array.from({ length: 40 }, (_, i) => job({ job_id: `j${i}`, issue_number: 4000 + i }));
+    const out = renderWatchRows(model({ jobs, rowOffset: 0, rowViewport: 10 }), Date.now(), ASCII);
+    expect(out).toContain("30 more");
+    for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(ASCII.width);
+  });
+
   test("the bar is one glyph per visible row, and blank when nothing scrolls", () => {
     expect(scrollbar(8, 0, 10, ASCII)).toEqual(Array(10).fill(" "));
     const bar = scrollbar(100, 0, 10, ASCII);
@@ -169,13 +176,13 @@ describe("scrolling", () => {
     const jobs = Array.from({ length: 40 }, (_, i) => job({ job_id: `j${i}`, issue_number: 4000 + i }));
     const out = renderWatchRows(model({ jobs, selected: 39, rowOffset: 30, rowViewport: 10 }), Date.now(), ASCII);
     const lines = out.split("\n");
-    expect(lines).toHaveLength(10);
+    expect(lines).toHaveLength(10); // exactly the window; nothing below it
     expect(out).toContain("rich#4039");
     expect(out).not.toContain("rich#4029");
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(ASCII.width);
   });
 
-  test("rows still fit once the gutter is added, at every width", () => {
+  test("rows and the overflow note fit the width", () => {
     const jobs = Array.from({ length: 30 }, (_, i) => job({ job_id: `j${i}`, title: "x".repeat(300) }));
     for (const width of [20, 40, 80, 120]) {
       const out = renderWatchRows(model({ jobs, rowViewport: 10 }), Date.now(), { ...ASCII, width });

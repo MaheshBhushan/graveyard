@@ -2,17 +2,23 @@
 // mk-fleet CLI: durable work queue plus the `dispatch` entry point, which
 // launches one worktree-isolated agent session per queued job (src/dispatch.ts).
 //
-// Usage (via the `gm` launcher in bin/gm, or `bun run src/cli.ts` directly):
+// Usage (via the `gm`/`graveyard` launcher in bin/gm, or `bun run src/cli.ts`):
 //   gm add <issue-url | owner/name#n> [--title <s>] [--priority <n>]
 //   gm add --repo <owner/name> --issue <n> [--title <s>] [--priority <n>]
 //   gm add --from-gh <owner/name> [--label <l>] [--limit <n>]
+//   gm start [--wip <n>] [--tick <s>] [--dry] [--foreground]
+//   gm watch [--interval <seconds>] [--wip <n>]
+//   gm stop
 //   gm list [--state <s>] [--json]
 //   gm status
 //   gm dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
-//   gm watch [--interval <seconds>] [--wip <n>]
 //
-// dispatch is INERT by default: without --live it launches a no-op instead of a
-// real agent, so a mistyped command costs nothing. --live is what spends tokens.
+// The normal loop is: add, start, watch. `start` runs the fleet until stopped
+// and is LIVE by default -- it spends tokens and pushes for real; `--dry`
+// launches no-ops instead.
+//
+// `dispatch` is the single pass underneath `start`, kept for scripting and
+// debugging. It is inert without --live.
 //
 // Global flag: --db <path> (default ~/.local/share/mk-fleet/fleet.sqlite)
 
@@ -23,10 +29,15 @@ import { dirname, join } from "node:path";
 import { readBugLabels, runDispatch } from "./dispatch.ts";
 import { addJob, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
+import { runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
 
 // Matches backfill.ts's hand-rolled flag parsing style.
+// Whichever name the launcher was invoked under, so `graveyard` does not
+// print usage telling you to run `gm`.
+const SELF = process.env.GRAVEYARD_INVOKED_AS || "gm";
+
 function argVal(flag: string): string | null {
   const i = process.argv.indexOf(flag);
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : null;
@@ -36,7 +47,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "dispatch", "watch"].includes(a),
+  ["add", "list", "status", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -239,6 +250,39 @@ switch (subcommand) {
   case "status":
     cmdStatus();
     break;
+  case "start": {
+    // start means start: live unless explicitly told to rehearse.
+    const live = !process.argv.includes("--dry");
+    const tickArg = argVal("--tick");
+    db.close();
+    process.exitCode = await runStart({
+      dbPath,
+      live,
+      foreground: process.argv.includes("--foreground"),
+      tickMs: tickArg ? Number(tickArg) * 1000 : undefined,
+      repoFilter: argVal("--repo"),
+    });
+    process.exit(process.exitCode ?? 0);
+  }
+  case "stop":
+    process.exitCode = runStop();
+    break;
+  case "__supervise": {
+    // Internal: the detached child `start` spawns. Not in the usage text.
+    const tickArg = argVal("--tick");
+    const wipArg = argVal("--wip");
+    const maxArg = argVal("--max-jobs");
+    db.close();
+    await supervise({
+      dbPath,
+      wip: wipArg ? Number(wipArg) : 3,
+      maxJobs: maxArg ? Number(maxArg) : 1,
+      live: process.argv.includes("--live"),
+      tickMs: tickArg ? Number(tickArg) * 1000 : 30_000,
+      repoFilter: argVal("--repo"),
+    });
+    process.exit(0);
+  }
   case "dispatch":
     await runDispatch(db);
     break;
@@ -254,17 +298,20 @@ switch (subcommand) {
     break;
   }
   default:
-    console.error("usage: gm <add|list|status|dispatch|watch> [flags]");
-    console.error("  watch [--interval <seconds>]  live view: per-job phase 0 verdict + logs");
-    console.error(
-      "  dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>] [--repos-dir <path>]",
-    );
-    console.error(
-      "  dispatch defaults: --wip 3 (measured safe concurrency), --max-jobs 1 (per-invocation launch cap)",
-    );
-    console.error(
-      "  dispatch is INERT without --live: it launches a no-op, not a real agent. --live spends tokens.",
-    );
+    console.error(`usage: ${SELF} <add|start|watch|stop|list|status|dispatch> [flags]`);
+    console.error("");
+    console.error(`  add <issue-url | owner/name#n>   queue an issue`);
+    console.error(`  start [--wip <n>] [--tick <s>]   run the fleet until stopped -- SPENDS TOKENS`);
+    console.error("  watch [--interval <seconds>]     dashboard: phase 0 verdicts + logs");
+    console.error("  stop                             stop the fleet (running agents finish)");
+    console.error("  list [--state <s>] [--json]      the queue");
+    console.error("  status                           counts by state");
+    console.error("");
+    console.error(`  start runs live by default; --dry launches no-ops instead.`);
+    console.error("  start defaults: --wip 3 (measured safe concurrency), --tick 30 (seconds)");
+    console.error("");
+    console.error("  dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]");
+    console.error("  dispatch is ONE PASS, and inert without --live. `start` is the loop.");
     process.exitCode = 1;
 }
 

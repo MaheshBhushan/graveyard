@@ -390,7 +390,15 @@ function renderPrompt(plan: Plan): string {
 // Reconcile jobs left in 'running' by a killed dispatcher. A scheduler that
 // double-launches on restart is broken, so this runs before any launch and is
 // the only thing that moves a job out of 'running'.
-async function reconcile(db: Database, reposDir: string, dryRun: boolean): Promise<number> {
+// `say` is the progress sink. `gm watch` reconciles on its own tick to keep the
+// dashboard honest without a dispatch running, and it must not print into the
+// alternate screen -- so it passes a no-op here.
+async function reconcile(
+  db: Database,
+  reposDir: string,
+  dryRun: boolean,
+  say: (s: string) => void = console.error,
+): Promise<number> {
   const running = listJobs(db, { state: "running" }) as DispatchJob[];
   let alive = 0;
 
@@ -398,7 +406,7 @@ async function reconcile(db: Database, reposDir: string, dryRun: boolean): Promi
     const tmux = job.tmux_session ?? tmuxName(job.job_id);
     if (await tmuxHasSession(tmux)) {
       alive++;
-      console.error(`  running: ${job.job_id} (tmux ${tmux} alive) -- left alone`);
+      say(`  running: ${job.job_id} (tmux ${tmux} alive) -- left alone`);
       continue;
     }
 
@@ -467,7 +475,7 @@ async function reconcile(db: Database, reposDir: string, dryRun: boolean): Promi
     }
 
     if (dryRun) {
-      console.error(`  would reconcile: ${job.job_id} running -> ${nextState}${reason ? ` (${reason})` : ""}`);
+      say(`  would reconcile: ${job.job_id} running -> ${nextState}${reason ? ` (${reason})` : ""}`);
       continue;
     }
 
@@ -500,7 +508,7 @@ async function reconcile(db: Database, reposDir: string, dryRun: boolean): Promi
           $reset_hint: verdict!.resetHint,
         });
       }
-      console.error(`  reconciled: ${job.job_id} running -> parked${reason ? ` (${reason})` : ""}`);
+      say(`  reconciled: ${job.job_id} running -> parked${reason ? ` (${reason})` : ""}`);
       continue;
     }
 
@@ -535,7 +543,7 @@ async function reconcile(db: Database, reposDir: string, dryRun: boolean): Promi
         $reset_hint: verdict.resetHint,
       });
     }
-    console.error(`  reconciled: ${job.job_id} running -> ${nextState}${reason ? ` (${reason})` : ""}`);
+    say(`  reconciled: ${job.job_id} running -> ${nextState}${reason ? ` (${reason})` : ""}`);
   }
 
   return alive;
@@ -792,82 +800,88 @@ async function launch(db: Database, plan: Plan): Promise<boolean> {
   return true;
 }
 
-export async function runDispatch(db: Database): Promise<void> {
-  const dryRun = process.argv.includes("--dry-run");
-  const live = process.argv.includes("--live");
-  const wipArg = argVal("--wip");
-  const maxJobsArg = argVal("--max-jobs");
-  const wip = wipArg ? Number(wipArg) : DEFAULT_WIP;
-  const maxJobs = maxJobsArg ? Number(maxJobsArg) : DEFAULT_MAX_JOBS;
-  const repoFilter = argVal("--repo");
-  const reposDir = argVal("--repos-dir") ?? DEFAULT_REPOS_DIR;
+export interface DispatchOpts {
+  wip: number;
+  maxJobs: number;
+  live: boolean;
+  dryRun?: boolean;
+  repoFilter?: string | null;
+  reposDir?: string;
+  say?: (s: string) => void;
+}
 
-  if (!Number.isFinite(wip) || wip < 1 || !Number.isFinite(maxJobs) || maxJobs < 1) {
-    console.error("--wip and --max-jobs must be positive integers");
-    process.exitCode = 1;
-    return;
-  }
-  if (wip > DEFAULT_WIP) {
-    console.error(`note: --wip ${wip} exceeds the measured safe limit of ${DEFAULT_WIP}`);
-  }
-  // A live fleet without ferb installed would improvise its own contribution
-  // loop, unattended, with push rights. Refuse rather than degrade.
-  if (live && !process.env.MK_FLEET_AGENT_CMD && !ferbInstalled()) {
-    console.error(`the ferb skill is required for --live but was not found at ${FERB_SKILL_PATH}`);
-    console.error("install it, or set MK_FLEET_AGENT_CMD to launch something else");
-    process.exitCode = 1;
-    return;
-  }
+export interface DispatchResult {
+  /** jobs occupying a WIP slot after this pass. */
+  alive: number;
+  launched: number;
+  /** still waiting in the queue, after this pass. */
+  queued: number;
+}
+
+/** Bring the database in line with reality without launching anything. `gm
+ *  watch` calls this so a finished job stops reading as running even when no
+ *  dispatch has run since it exited. */
+export async function reconcileOnly(db: Database, reposDir = DEFAULT_REPOS_DIR): Promise<void> {
+  migrateJobs(db);
+  await reconcile(db, reposDir, false, () => {});
+}
+
+// One pass: reconcile what finished, resume what can be resumed, fill the free
+// slots. `gm start` calls this on a timer; `gm dispatch` calls it once.
+export async function dispatchOnce(db: Database, opts: DispatchOpts): Promise<DispatchResult> {
+  const { wip, maxJobs, live } = opts;
+  const dryRun = opts.dryRun ?? false;
+  const repoFilter = opts.repoFilter ?? null;
+  const reposDir = opts.reposDir ?? DEFAULT_REPOS_DIR;
+  const say = opts.say ?? console.error;
 
   // Idempotent ADD COLUMN only; --dry-run does no row writes beyond this.
   migrateJobs(db);
 
-  console.error(
-    `mk-fleet dispatch: wip=${wip} max-jobs=${maxJobs}${dryRun ? " (DRY RUN -- nothing will be created)" : ""}`,
-  );
-  console.error("reconcile:");
-  const aliveRunning = await reconcile(db, reposDir, dryRun);
+  say("reconcile:");
+  const aliveRunning = await reconcile(db, reposDir, dryRun, say);
 
-  console.error("resume:");
+  say("resume:");
   const resumeBudget = Math.max(wip - aliveRunning, 0);
   const resumed = await resumeStalled(db, reposDir, dryRun, resumeBudget, live);
   const alive = aliveRunning + resumed;
 
-  const slots = Math.min(Math.max(wip - alive, 0), maxJobs);
-  console.error(`running now: ${alive}; free slots this invocation: ${slots}`);
-  if (slots === 0) {
-    console.error("nothing to launch");
-    return;
-  }
-
-  const queued = (listJobs(db, { state: "queued" }) as DispatchJob[]).filter(
+  const queuedNow = (listJobs(db, { state: "queued" }) as DispatchJob[]).filter(
     (j) => !repoFilter || j.repo === repoFilter,
   );
-  console.error(`plan (${queued.length} queued candidate${queued.length === 1 ? "" : "s"}):`);
+
+  const slots = Math.min(Math.max(wip - alive, 0), maxJobs);
+  say(`running now: ${alive}; free slots this pass: ${slots}`);
+  if (slots === 0) {
+    say("nothing to launch");
+    return { alive, launched: 0, queued: queuedNow.length };
+  }
+
+  say(`plan (${queuedNow.length} queued candidate${queuedNow.length === 1 ? "" : "s"}):`);
 
   let launched = 0;
-  for (const job of queued) {
+  for (const job of queuedNow) {
     if (launched >= slots) break;
     const plan = await buildPlan(job, reposDir, live);
     if ("blocked" in plan) {
       if (dryRun) {
-        console.error(`  would block ${job.job_id}: ${plan.blocked}`);
+        say(`  would block ${job.job_id}: ${plan.blocked}`);
       } else {
         transitionJob(db, job.job_id, "blocked", {
           ended_at: new Date().toISOString(),
           last_error: plan.blocked,
         });
-        console.error(`  blocked ${job.job_id}: ${plan.blocked}`);
+        say(`  blocked ${job.job_id}: ${plan.blocked}`);
       }
       continue; // a refusal consumes no slot
     }
 
     if (dryRun) {
-      console.error(`  would launch ${job.job_id} (${job.repo}#${job.issue_number ?? "-"})`);
-      console.error(`    worktree: ${plan.worktree}  (from ${plan.srcRepo} @ ${plan.baseRef})`);
-      console.error(`    branch:   ${plan.branch}`);
-      console.error(`    tmux:     tmux new-session -d -s ${plan.tmux} -c ${plan.worktree} '${plan.shellCmd}'`);
-      console.error(
+      say(`  would launch ${job.job_id} (${job.repo}#${job.issue_number ?? "-"})`);
+      say(`    worktree: ${plan.worktree}  (from ${plan.srcRepo} @ ${plan.baseRef})`);
+      say(`    branch:   ${plan.branch}`);
+      say(`    tmux:     tmux new-session -d -s ${plan.tmux} -c ${plan.worktree} '${plan.shellCmd}'`);
+      say(
         `    ceilings: ${plan.cfg.max_files_changed} files / ${plan.cfg.max_lines_changed} lines / ` +
           `${plan.cfg.max_prs_per_week} prs-per-week (from repos.yaml)`,
       );
@@ -878,14 +892,65 @@ export async function runDispatch(db: Database): Promise<void> {
     if (await launch(db, plan)) launched++;
   }
 
-  console.error(dryRun ? `would launch ${launched} job(s)` : `launched ${launched} job(s)`);
+  say(dryRun ? `would launch ${launched} job(s)` : `launched ${launched} job(s)`);
+  const remaining = (listJobs(db, { state: "queued" }) as DispatchJob[]).filter(
+    (j) => !repoFilter || j.repo === repoFilter,
+  ).length;
+  return { alive: alive + launched, launched, queued: remaining };
+}
+
+/** Shared by `dispatch` and `start`: validate the flags both accept, or print
+ *  why not and return null. */
+export function resolveFleetFlags(live: boolean): { wip: number; maxJobs: number } | null {
+  const wipArg = argVal("--wip");
+  const maxJobsArg = argVal("--max-jobs");
+  const wip = wipArg ? Number(wipArg) : DEFAULT_WIP;
+  const maxJobs = maxJobsArg ? Number(maxJobsArg) : DEFAULT_MAX_JOBS;
+
+  if (!Number.isFinite(wip) || wip < 1 || !Number.isFinite(maxJobs) || maxJobs < 1) {
+    console.error("--wip and --max-jobs must be positive integers");
+    return null;
+  }
+  if (wip > DEFAULT_WIP) {
+    console.error(`note: --wip ${wip} exceeds the measured safe limit of ${DEFAULT_WIP}`);
+  }
+  // A live fleet without ferb installed would improvise its own contribution
+  // loop, unattended, with push rights. Refuse rather than degrade.
+  if (live && !process.env.MK_FLEET_AGENT_CMD && !ferbInstalled()) {
+    console.error(`the ferb skill is required for --live but was not found at ${FERB_SKILL_PATH}`);
+    console.error("install it, or set MK_FLEET_AGENT_CMD to launch something else");
+    return null;
+  }
+  return { wip, maxJobs };
+}
+
+export async function runDispatch(db: Database): Promise<void> {
+  const dryRun = process.argv.includes("--dry-run");
+  const live = process.argv.includes("--live");
+  const flags = resolveFleetFlags(live);
+  if (!flags) {
+    process.exitCode = 1;
+    return;
+  }
+
+  console.error(
+    `mk-fleet dispatch: wip=${flags.wip} max-jobs=${flags.maxJobs}` +
+      `${dryRun ? " (DRY RUN -- nothing will be created)" : ""}`,
+  );
+  await dispatchOnce(db, {
+    ...flags,
+    live,
+    dryRun,
+    repoFilter: argVal("--repo"),
+    reposDir: argVal("--repos-dir") ?? DEFAULT_REPOS_DIR,
+  });
 
   // The dashboard is the one piece of dispatch output that's "data" rather
   // than progress: current fleet state after this invocation's reconcile/
   // resume/launch pass. Everything above is diagnostics on stderr; this goes
   // to stdout.
   const allJobs = listJobs(db) as DispatchJob[];
-  console.log(renderDashboard(allJobs, Date.now(), resolveTheme(), { wip }));
+  console.log(renderDashboard(allJobs, Date.now(), resolveTheme(), { wip: flags.wip }));
 }
 
 if (import.meta.main) {

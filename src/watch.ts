@@ -7,6 +7,7 @@
 // the loop below reads the clock, the database, the filesystem, or the keyboard.
 
 import type { Database } from "bun:sqlite";
+import { reconcileOnly } from "./dispatch.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -186,45 +187,51 @@ export function renderWatchRows(model: WatchModel, now: number, theme: Theme): s
 
   const viewport = Math.max(1, Math.min(model.rowViewport, model.jobs.length));
   const offset = clampScroll(model.rowOffset, model.jobs.length, viewport);
-  const bar = scrollbar(model.jobs.length, offset, viewport, theme);
+  // No gutter here on purpose: the list is navigated with the arrow keys and
+  // the window follows the selection, so a bar would only cost width. The log
+  // pane is the one you actually scroll through, and it keeps its bar.
+  const more = model.jobs.length - (offset + viewport);
 
   // Everything the title has to share the line with, counted exactly:
   //   caret(1) sp(1) glyph(1) sp(1) repo(repoW) gap(2) <title> gap(2)
-  //   badge(VERDICT_COL) gap(2) elapsed(elapsedW) gutter(GUTTER)
-  const fixed = 10 + repoW + VERDICT_COL + elapsedW + GUTTER;
+  //   badge(VERDICT_COL) gap(2) elapsed(elapsedW)
+  const fixed = 10 + repoW + VERDICT_COL + elapsedW;
   const titleBudget = theme.width - fixed;
   // Below this the title column is not worth the space it costs. Dropping it
   // (rather than flooring the budget) is what keeps a narrow terminal from
   // rendering rows wider than itself -- the verdict is the thing worth keeping.
   const compact = titleBudget < 8;
 
-  return model.jobs
-    .slice(offset, offset + viewport)
-    .map((j, vi) => {
-      const i = offset + vi;
-      const caret = i === model.selected ? ink(theme.unicode ? "❯" : ">", "accent", theme) : " ";
-      const glyph = stateGlyph(j.alive && j.state === "running" ? "running" : j.state, theme);
-      const badge = verdictBadge(j.verdict, theme);
-      const gut = ` ${bar[vi] ?? " "}`;
+  const lines = model.jobs.slice(offset, offset + viewport).map((j, vi) => {
+    const i = offset + vi;
+    const caret = i === model.selected ? ink(theme.unicode ? "❯" : ">", "accent", theme) : " ";
+    const glyph = stateGlyph(j.alive && j.state === "running" ? "running" : j.state, theme);
+    const badge = verdictBadge(j.verdict, theme);
 
-      if (compact) {
-        // Truncate the repo label unpainted, then pad: slicing a painted string
-        // can cut its reset off and bleed colour down the page.
-        const room = Math.max(3, theme.width - 2 - 1 - 1 - 2 - VERDICT_COL - GUTTER);
-        const repo = pad(truncate(repoCol[i]!, room, theme), room);
-        return `${caret} ${glyph} ${repo}  ${pad(badge, VERDICT_COL)}${gut}`;
-      }
+    if (compact) {
+      // Truncate the repo label unpainted, then pad: slicing a painted string
+      // can cut its reset off and bleed colour down the page.
+      const room = Math.max(3, theme.width - 2 - 1 - 1 - 2 - VERDICT_COL);
+      const repo = truncate(repoCol[i]!, room, theme);
+      return `${caret} ${glyph} ${repo}  ${pad(badge, VERDICT_COL)}`.trimEnd();
+    }
 
-      const repo = pad(repoCol[i]!, repoW);
-      const rawTitle = j.title?.trim() || j.state;
-      const title = pad(
-        ink(truncate(rawTitle, titleBudget, theme), i === model.selected ? "bold" : "dim", theme),
-        titleBudget,
-      );
-      const tail = `${pad(badge, VERDICT_COL)}  ${pad(elapsedCol[i]!, elapsedW, "right")}`;
-      return `${caret} ${glyph} ${repo}  ${title}  ${tail}${gut}`;
-    })
-    .join("\n");
+    const repo = pad(repoCol[i]!, repoW);
+    const rawTitle = j.title?.trim() || j.state;
+    const title = pad(
+      ink(truncate(rawTitle, titleBudget, theme), i === model.selected ? "bold" : "dim", theme),
+      titleBudget,
+    );
+    return `${caret} ${glyph} ${repo}  ${title}  ${pad(badge, VERDICT_COL)}  ${pad(elapsedCol[i]!, elapsedW, "right")}`.trimEnd();
+  });
+
+  // Without a bar, say plainly that the list continues -- otherwise a queue
+  // taller than the window looks like the whole fleet.
+  if (more > 0) {
+    const note = `   ${theme.unicode ? "…" : "..."} ${more} more (${theme.unicode ? "↓" : "j"} to reach)`;
+    lines.push(ink(truncate(note, theme.width, theme), "dim", theme));
+  }
+  return lines.join("\n");
 }
 
 // ---- verdict pane -----------------------------------------------------------
@@ -495,6 +502,17 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
 
   try {
     while (!stop) {
+      // Bring the database in line with reality before reading it. Without
+      // this, a job whose agent exited stays "running" on screen until the
+      // next dispatch happens to run -- which, with no supervisor up, is
+      // never. Silent: reconcile's progress lines would corrupt the screen.
+      try {
+        await reconcileOnly(db);
+      } catch {
+        // A reconcile failure is not worth tearing the view down for; the
+        // next tick tries again and the rows are still readable meanwhile.
+      }
+
       const rows = query.all() as (JobRow & { tmux_session: string | null })[];
       jobCount = rows.length;
       selected = Math.min(selected, Math.max(0, rows.length - 1));
@@ -522,7 +540,8 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
       const verdictH = sel ? renderVerdictPane(sel, theme).split("\n").length : 0;
       const chrome = 3 /* box */ + 2 /* blanks */ + verdictH + 1 /* blank */ + 1 /* log head */ + 2;
       const free = Math.max(6, height - chrome);
-      rowViewport = Math.max(3, Math.min(jobs.length || 1, Math.floor(free * 0.55)));
+      // -1 leaves room for the "… N more" line the row pane may append.
+      rowViewport = Math.max(3, Math.min(jobs.length || 1, Math.floor(free * 0.55) - 1));
       logViewport = Math.max(3, free - rowViewport);
 
       rowOffset = followSelection(selected, clampScroll(rowOffset, jobs.length, rowViewport), rowViewport);

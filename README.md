@@ -23,18 +23,19 @@ A scheduler for unattended coding agents. Queue up GitHub issues, walk away, and
 come back to one pull request per issue — each fixed and tested in its own
 throwaway checkout, pushed to your fork, with the issue thread notified.
 
-`gm watch`, rendered from the live database — three real declines, none of them
+`gm watch`, rendered from the live database — six real declines, none of them
 mine to overrule:
 
 ```
 ╭─ graveyard ────────────────────────────────────╮
-│  wip 0/3   queued 3   done 3   go 0   no-go 3  │
+│  wip 0/3   queued 0   done 8   go 0   no-go 6  │
 ╰────────────────────────────────────────────────╯
-  ○ rich#4183           [BUG] attribute names `awehoi234_wdf…  ·             │
-  ○ rich#4192           [BUG] Live outputs different amounts…  ·             │
-  ✔ rich#3299           [BUG] Segment._split_cells doesn't h…  ·      15m12s █
-❯ ✔ rich#4199           Fix ambiguous-width character handli…  NO-GO   1m55s █
-  ✔ rich#4207           [BUG] `Live`s don't get refreshed af…  ·      15m12s █
+  ✔ rich#4183           [BUG] attribute names `awehoi234_wdfjw…  NO-GO   9m21s
+  ✔ rich#4192           [BUG] Live outputs different amounts o…  NO-GO   9m28s
+  ✔ rich#4194           [BUG] When highlighting keywords, rich…  NO-GO   7m11s
+  ✔ rich#4196           [BUG] Line breaking breaks at NBSP (U+…  NO-GO   7m36s
+❯ ✔ rich#4199           Fix ambiguous-width character handling…  NO-GO   1m55s
+   … 1 more (↓ to reach)
  │ verdict     NO-GO
  │ reason      Undecided design question, not a defect. The reporter
  │             explicitly asked maintainers for direction and no maintainer
@@ -107,10 +108,11 @@ is the most useful thing in this repo.
 5. **Reconcile** — the next `dispatch` classifies each job: session gone plus a
    record means done; gone without one means work out why. Diffs are re-measured
    with `git diff --numstat` rather than believed from the agent.
-6. **Tick** — `dispatch` is one-shot: reconcile, launch up to `--max-jobs`, exit.
-   A systemd user timer calls it every 10 minutes, which is what keeps the queue
-   draining. Without the timer the fleet stalls at whatever one invocation
-   started. See [`deploy/`](deploy/).
+6. **Refill** — `gm start` runs a supervisor that repeats steps 2–5 on a tick.
+   A job ending frees a WIP slot the next tick fills, so the queue drains on its
+   own. It keeps running after the queue empties, so a later `gm add` is picked
+   up without restarting anything. `gm stop` ends the loop; agents already
+   launched finish rather than being killed with tokens spent.
 7. **You** — read the run records and the PRs that are already open.
 
 ## Watching it
@@ -131,15 +133,15 @@ back to parsing the run record for jobs that predate it.
 
 `l` toggles the bottom pane between the live `agent.log` and the finished run
 record. Elapsed time is measured from launch to when `reconcile` *observed* the
-job finish, so with the timer running it can overstate by up to one tick — which
-is why two unrelated jobs both read `15m12s` above.
+job finish, so with the supervisor running it can overstate by up to one tick.
 
 **Scrolling.** The view runs on the alternate screen, so the terminal's own
-scrollback is gone while it's open — both panes scroll themselves instead. The
-job list is a window that follows the selection; the log pane takes the mouse
-wheel, `PgUp`/`PgDn`, and `g`/`G` for top and end. Each has a gutter showing
-where you are, and the log sticks to its newest line until you deliberately
-scroll away — `G` re-attaches it. Both panes resize with the terminal.
+scrollback is gone while it's open. The job list is a window you move with the
+arrow keys — it follows the selection and says how many rows are below the fold.
+The log pane is the one you actually scroll: mouse wheel, `PgUp`/`PgDn`, and
+`g`/`G` for top and end, with a bar showing where you are. It sticks to its
+newest line until you deliberately scroll away; `G` re-attaches it. Both panes
+resize with the terminal.
 
 ## Honest status
 
@@ -201,53 +203,74 @@ is `@types/bun`.
 ```bash
 git clone https://github.com/MaheshBhushan/graveyard
 cd graveyard
-bun test                                 # 46 tests, no install step
-ln -s "$PWD/bin/gm" ~/.local/bin/gm      # must be on your PATH
+bun test                                 # 47 tests, no install step
+ln -s "$PWD/bin/gm" ~/.local/bin/gm         # must be on your PATH
+ln -s "$PWD/bin/gm" ~/.local/bin/graveyard  # same tool, longer name
 ```
 
 `bin/gm` resolves through the symlink, so the repo can live anywhere — including
 a path with spaces — and `gm` works from any directory. Then queue something:
 
+Three commands, in this order:
+
 ```bash
 gm add https://github.com/Textualize/rich/issues/4196   # paste a URL
-gm add Textualize/rich#4196                             # or the short form
-gm add --from-gh Textualize/rich   # or bulk: every open issue with a bug label
-gm list                            # the fleet dashboard
-gm dispatch                        # inert: launches a no-op, spends nothing
-gm dispatch --live                 # spends tokens and acts publicly
+gm start                                                # work the queue, live
+gm watch                                                # see what it's doing
+```
+
+`gm start` returns immediately and leaves a supervisor running in the
+background. From then on the queue drains by itself: it holds the WIP limit,
+refills a slot as soon as a job ends, and keeps idling afterwards so a later
+`gm add` is picked up on the next tick. `gm stop` ends it.
+
+> [!WARNING]
+> `start` is **live by default** — it spends tokens and opens real PRs. Use
+> `gm start --dry` to run the same loop against no-op agents first.
+
+The rest:
+
+```bash
+gm add Textualize/rich#4196        # short form
+gm add --from-gh Textualize/rich   # bulk: every open issue with a bug label
+gm list                            # the queue, non-interactive
+gm status                          # counts by state
+gm stop                            # stop the supervisor
+gm dispatch --live                 # one pass, no loop (what `start` runs on a tick)
 ```
 
 Adding by URL looks the title up through `gh`, and re-adding the same issue in
-any of the three forms collides on the same deterministic job id rather than
-queueing it twice.
+any form collides on the same deterministic job id rather than queueing it
+twice. Every command also answers to `graveyard` if you'd rather type it out.
 
 State lives in SQLite at `~/.local/share/mk-fleet/fleet.sqlite`, overridable with
 `--db <path>`.
 
-### The tick
+### Surviving a reboot
+
+`gm start` is enough for a session. To have the fleet come back on its own:
 
 ```bash
-cp deploy/graveyard.{service,timer} ~/.config/systemd/user/
+cp deploy/graveyard.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now graveyard.timer     # arms a paid, unattended loop
+systemctl --user enable --now graveyard      # arms a paid, unattended loop
 ```
 
-Both caps still apply per tick, so the fleet fills to the WIP limit one job at a
-time rather than launching several paid agents at once. Edit the `PATH=` line in
-the service if `claude` and `gm` don't live in `~/.local/bin` — a systemd user
-unit gets a minimal environment and the agent's tmux session inherits it, so a
-missing `PATH` entry shows up as a launch that succeeds with an agent that was
-never found.
+The unit runs `gm start --foreground`, so it is the same supervisor — don't run
+both. Edit the `PATH=` line if `claude` and `gm` don't live in `~/.local/bin`: a
+systemd user unit gets a minimal environment and the agent's tmux session
+inherits it, so a missing entry shows up as a launch that succeeds with an agent
+that was never found.
 
-Arm it last, and only after one supervised `--live` run: the timer's whole job is
-to spend money and act publicly without asking.
+Enable it last, and only after watching one live run: its whole job is to spend
+money and act publicly without asking.
 
 ## Layout
 
 ```
 bin/gm                 launcher; resolves through its own symlink
 prompts/               the dispatch prompt — delegates to ferb, adds 6 addenda
-deploy/                systemd user service + timer (the tick)
+deploy/                systemd user service, for surviving a reboot
 schema.sql             job queue and telemetry tables
 src/telemetry.ts       transcript parsing, session derivation, quota classification
 src/backfill.ts        corpus -> sqlite (read-only on the corpus, idempotent)
@@ -255,8 +278,9 @@ src/queue.ts           durable job queue
 src/dispatch.ts        worktrees, tmux launch, reconcile, diff ceilings
 src/recover.ts         stall classification and resume decisions
 src/render.ts          terminal rendering (pure, snapshot-tested)
+src/supervisor.ts      the `start` loop: tick, refill, pidfile, stop
 src/watch.ts           live TUI: phase 0 verdicts + log pane
-test/                  46 tests over the pure renderers, parsers and refs
+test/                  47 tests over the pure renderers, parsers and refs
 analysis/              the go/no-go gate, and the two live runs
 ```
 

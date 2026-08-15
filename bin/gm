@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# graveyard launcher. Install by symlinking this onto PATH:
+# graveyard launcher. Install by symlinking this onto PATH under either name:
 #
 #   ln -s /path/to/graveyard/bin/gm ~/.local/bin/gm
+#   ln -s /path/to/graveyard/bin/gm ~/.local/bin/graveyard
+#
+# Usage text echoes back whichever name you invoked.
 #
 # Resolves through the symlink so the repo can live anywhere, including a
 # path with spaces in it.
@@ -17,4 +20,4 @@ while [ -L "$self" ]; do
 done
 root=$(cd "$(dirname "$self")/.." && pwd)
 
-exec bun run "$root/src/cli.ts" "$@"
+GRAVEYARD_INVOKED_AS=$(basename "${BASH_SOURCE[0]}") exec bun run "$root/src/cli.ts" "$@"
