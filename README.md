@@ -80,7 +80,11 @@ most useful thing in this repo.
 5. **Reconcile** — the next `dispatch` classifies each job: session gone plus a
    record means done; gone without one means work out why. Diffs are re-measured
    with `git diff --numstat` rather than believed from the agent.
-6. **You** — read the run records and the PRs that are already open.
+6. **Tick** — `dispatch` is one-shot: it reconciles, launches up to `--max-jobs`,
+   and exits. A systemd user timer calls it every 10 minutes, which is what keeps
+   the queue draining after the first agent finishes. Without the timer the fleet
+   stalls at whatever one invocation started. See [`deploy/`](deploy/).
+7. **You** — read the run records and the PRs that are already open.
 
 ### Guardrails, and what's left of them
 
@@ -173,6 +177,24 @@ cd graveyard
 bun test
 ln -s "$PWD/bin/gm" ~/.local/bin/gm     # the `gm` shortcut
 ```
+
+### The tick
+
+```
+cp deploy/graveyard.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now graveyard.timer     # arms a paid, unattended loop
+```
+
+Both caps still apply per tick, so the fleet fills to the WIP limit one job at a
+time rather than launching several paid agents at once. Edit the `PATH=` line in
+the service if `claude` and `gm` don't live in `~/.local/bin` on your machine —
+a systemd user unit gets a minimal environment, and the agent's tmux session
+inherits it, so a missing `PATH` entry shows up as a launch that succeeds with an
+agent that was never found.
+
+Arm it last, and only after one supervised `--live` run: the timer's whole job is
+to spend money and act publicly without asking.
 
 `bin/gm` resolves through the symlink, so the repo can live anywhere and `gm`
 works from any directory:

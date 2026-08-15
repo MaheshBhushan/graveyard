@@ -1,0 +1,19 @@
+[Unit]
+Description=graveyard: dispatch queued issues to unattended coding agents
+Documentation=https://github.com/MaheshBhushan/graveyard
+# tmux sessions the agents run in are detached children; nothing here should
+# wait on them or kill them when the oneshot exits.
+
+[Service]
+Type=oneshot
+# The dispatched agent runs inside a tmux session started by this unit, so it
+# inherits this environment. A systemd user unit gets a minimal PATH, and both
+# `claude` and the `gm` launcher live in ~/.local/bin -- without this the launch
+# succeeds and the agent command is silently not found.
+Environment=PATH=/home/maheshk/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/maheshk/.local/bin/gm dispatch --live
+# dispatch is idempotent and safe to re-run: it reconciles before it launches,
+# and refuses to exceed the WIP limit. A failed invocation is not fatal to the
+# fleet -- the next tick reconciles whatever was left behind.
+SuccessExitStatus=0 1
+KillMode=process
