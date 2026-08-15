@@ -23,20 +23,18 @@ A scheduler for unattended coding agents. Queue up GitHub issues, walk away, and
 come back to one pull request per issue — each fixed and tested in its own
 throwaway checkout, pushed to your fork, with the issue thread notified.
 
-`gm watch`, rendered from the live database — one real NO-GO, four still queued:
+`gm watch`, rendered from the live database — three real declines, none of them
+mine to overrule:
 
 ```
 ╭─ graveyard ────────────────────────────────────╮
-│  wip 0/3   queued 4   done 3   go 0   no-go 1  │
+│  wip 0/3   queued 3   done 3   go 0   no-go 3  │
 ╰────────────────────────────────────────────────╯
-  ○ rich#4183  [BUG] attribute names `awehoi234_wdfjwljet234…  ·
-  ○ rich#4192  [BUG] Live outputs different amounts of newli…  ·
-  ○ rich#4194  [BUG] When highlighting keywords, rich mistak…  ·
-  ○ rich#4196  [BUG] Line breaking breaks at NBSP (U+00A0) —…  ·
-  ✔ rich#3299  [BUG] Segment._split_cells doesn't handle non…  ·      15m12s
-❯ ✔ rich#4199  Fix ambiguous-width character handling for CJ…  NO-GO   1m55s
-  ✔ rich#4207  [BUG] `Live`s don't get refreshed after first…  ·      15m12s
-
+  ○ rich#4183           [BUG] attribute names `awehoi234_wdf…  ·             │
+  ○ rich#4192           [BUG] Live outputs different amounts…  ·             │
+  ✔ rich#3299           [BUG] Segment._split_cells doesn't h…  ·      15m12s █
+❯ ✔ rich#4199           Fix ambiguous-width character handli…  NO-GO   1m55s █
+  ✔ rich#4207           [BUG] `Live`s don't get refreshed af…  ·      15m12s █
  │ verdict     NO-GO
  │ reason      Undecided design question, not a defect. The reporter
  │             explicitly asked maintainers for direction and no maintainer
@@ -47,8 +45,11 @@ throwaway checkout, pushed to your fork, with the issue thread notified.
  │             correctness not test-checkable here
  │ effort      heavy
  │ confidence  low
-
- ↑↓ select   l log/record   space pause   r refresh   q quit
+ Textualize__rich-4199/agent.log 17-19/19 ──────────────────────────────────
+   - Latent trap for whoever does implement it: `_SINGLE_CELL_UNICODE_RANG… │
+                                                                            │
+   Run record written to `/home/maheshk/.local/share/mk-fleet/runs/Textual… █
+ ↑↓ select   wheel scroll   g/G top/end   l log/record   space pause   q quit
 ```
 
 > [!WARNING]
