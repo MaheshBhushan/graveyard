@@ -126,13 +126,17 @@ works from any directory:
 
 ```
 $ gm status
-queued   5
+queued   0
 running  0
-done     2
+done     0
 failed   0
 blocked  0
-total    7
+total    0
 ```
+
+State lives in SQLite at `~/.local/share/mk-fleet/fleet.sqlite`, overridable
+per-invocation with `--db <path>`. A fresh install reports zeros until you queue
+something with `gm add`.
 
 `dispatch` is **inert without `--live`**: it launches a no-op instead of a real
 agent, so a mistyped command costs nothing. Point `MK_FLEET_AGENT_CMD` at
