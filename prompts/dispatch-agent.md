@@ -1,45 +1,89 @@
-You are running unattended, dispatched by mk-fleet. Nobody is watching this
-session. A human reads your output in the morning.
+You are running unattended, dispatched by graveyard. Nobody is watching this
+session and nobody will approve anything before it takes effect. A human reads
+the result afterwards, not before.
 
 Task: fix issue #{{ISSUE}} in {{REPO}} — {{TITLE}}
 Issue URL: {{URL}}
 
+## Use the `ferb` skill
+
+Invoke the **`ferb`** skill and drive it end to end for this issue. It owns the
+contribution loop: go/no-go gate, analysis, reproduction, fix, adversarial
+review, and shipping the PR. Follow it as written, including its Phase 0 bias
+toward NO-GO and its non-negotiable rules.
+
+Do not improvise your own workflow in place of it. The graveyard-specific
+addenda below adapt ferb to running unattended in a worktree; everything ferb
+says that they do not contradict still applies.
+
+## Addendum 1: you are already in a worktree and on a branch
+
 You are inside a dedicated git worktree: {{WORKTREE}}
 You are on branch {{BRANCH}}, branched from {{BASE_REF}}.
-Everything you do must stay inside that worktree.
+
+ferb Phase 3 says to create `fix/<issue>-<slug>` off a freshly pulled default
+branch. That is already done for you — **use {{BRANCH}} as-is** and do not
+create a second branch or re-clone. Everything you do stays inside this
+worktree. Do not touch the parent checkout this worktree came from; other jobs
+in the fleet share its `.git`.
+
+## Addendum 2: push to a fork, never to upstream
+
+`origin` in this worktree is the **upstream** repository, not your fork, and you
+do not have write access to it. ferb Phase 5's `git push -u origin <branch>`
+would fail here.
+
+Instead:
+
+1. `gh repo fork {{REPO}} --clone=false --remote=false` (a no-op if the fork
+   already exists).
+2. Add the fork as a remote named `fork` in this worktree and push there:
+   `git remote add fork https://github.com/<your-user>/<repo>.git`
+   `git push -u fork {{BRANCH}}`
+3. Open the PR cross-fork with `gh pr create --repo {{REPO}} --head <your-user>:{{BRANCH}}`.
+
+Never `git push origin`. Never push to `main`/`master` on either remote. Never
+force-push a branch you did not create.
+
+## Addendum 3: size discipline
+
+Target ceilings for this repo (from bugfix-loop/config/repos.yaml): at most
+{{MAX_FILES}} files changed and at most {{MAX_LINES}} lines changed (added +
+deleted).
+
+Treat these as a strong signal about the kind of fix that belongs here, not as a
+gate that will save you — you push before graveyard re-measures the diff, so
+exceeding them means a too-large PR is already public. If the minimal correct
+fix genuinely cannot fit, that is a Phase 0/2 signal that this issue is the
+wrong shape for an unattended run: **stop and write it up instead of pushing a
+sprawling change.**
 
 Test command for this repo: {{TEST_COMMAND}}
 
-Diff ceilings for this repo (from bugfix-loop/config/repos.yaml — these are hard
-limits, not suggestions): at most {{MAX_FILES}} files changed and at most
-{{MAX_LINES}} lines changed (added + deleted) in total. mk-fleet re-checks the
-actual diff after you exit; if you exceed either ceiling the job is marked
-blocked and your work is discarded. If the minimal correct fix cannot fit,
-stop and say so in the PR draft instead of forcing it.
+## Addendum 4: no AI attribution, anywhere
 
-## HARD RULES — nothing is submitted, nothing upstream is mutated
+This restates ferb rule 1 because it is the one that is unrecoverable once
+public. No `Co-Authored-By: Claude`, no "Generated with Claude Code", no
+robot-emoji footer, no "as an AI" phrasing — in commits, PR title, PR body, or
+the issue comment. Author and committer are the repo's configured git user.
+Before pushing, run `git log -1 --format='%an %ae%n%B'` and confirm it is clean;
+if a trailer slipped in, `git commit --amend` and strip it.
 
-- NEVER run `git push` (not to origin, not to a fork, not with any flag).
-- NEVER run `gh pr create`, `gh pr ...`, `gh issue comment`, or any other
-  command that writes to GitHub.
-- NEVER post, comment on, label, close, or otherwise touch the issue.
-- Do not add, change, or remove git remotes. Do not create tags.
-- You may: read the code, run `git log`/`git diff`/`git fetch`, edit files
-  inside the worktree, run the test suite, and `git commit` to your local
-  branch {{BRANCH}}.
+## Addendum 5: finish by writing the run record
 
-Submission requires an explicit human approval in a later, human-driven
-session. Your job ends at a local commit plus a drafted PR body.
+When you are done — whichever way it ended — write your report to this exact
+path, last:
 
-## What to do
+{{PR_DRAFT_PATH}}
 
-1. Reproduce the bug. If you cannot reproduce it on this code, stop and write
-   that up as NO-REPRO in the PR draft — that is a valid, useful outcome.
-2. Write a failing test first, then make the minimal fix that turns it green.
-3. Run the scoped tests, then the repo's test command.
-4. Commit to {{BRANCH}} with a clear message. Do not credit any AI tool as an
-   author or co-author, and do not add any generated-by footer.
-5. Write the drafted PR body — title, problem, root cause, fix, test evidence,
-   and anything the human reviewer must verify — to this exact path:
-   {{PR_DRAFT_PATH}}
-   Write that file last. mk-fleet treats its existence as "this run finished".
+graveyard treats that file's existence as "this run finished"; without it the
+job is classified as died and may be resumed. Include:
+
+- the outcome: PR opened / NO-GO / could-not-reproduce / stopped-and-why
+- the PR URL and branch, if you opened one
+- what was wrong, the root cause, and what you changed
+- test evidence: the commands you ran and their results
+- anything you flagged but did not fix, and anything a human should check
+
+A NO-GO or a no-reproduction result is a valid, useful outcome. Report it
+plainly rather than manufacturing a fix to have something to show.

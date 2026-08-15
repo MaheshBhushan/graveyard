@@ -3,10 +3,14 @@
 Runs the graveyard shift so you don't have to.
 
 A scheduler for unattended coding agents. Queue up GitHub issues, walk away, and
-come back to one drafted pull request per issue — each written in its own
-throwaway checkout, each stopping short of anything you can't take back.
+come back to one opened pull request per issue — each fixed and tested in its own
+throwaway checkout, pushed to your fork, with the issue thread notified.
 
-Nothing is pushed. Nothing is opened upstream. Every public action is still yours.
+**This pushes for real.** Each agent runs the full contribution loop via the
+[`ferb`](#skill-dependency-ferb) skill and ships: fork, branch, push, `gh pr
+create`, issue comment. There is no human between the agent and the repo. What
+stands in for review is ferb's own go/no-go gate, which is biased toward
+declining, and its rule that a fix without a regression test doesn't ship.
 
 ```
 $ gm add --from-gh Textualize/rich
@@ -66,28 +70,71 @@ most useful thing in this repo.
 2. **Isolate** — each job gets its own `git worktree` on its own branch off
    `origin/main`. Two agents can't collide because they aren't in the same files.
 3. **Launch** — the agent runs in a detached tmux session with approvals turned
-   off. That flag is the whole point, and the worktree is why it's survivable:
-   a disposable checkout with no network write path.
-4. **Work** — the agent reproduces the bug, fixes it, writes a test, runs the
-   suite, commits to its branch. Its last act is writing `pr-draft.md`. That
-   file's existence is the completion signal.
+   off, on `claude-opus-5` at `--effort low`. Low is deliberate: this session is
+   an orchestrator, and `ferb` dispatches its own phases at their own models and
+   efforts.
+4. **Work** — the agent drives `ferb`: go/no-go, analyse, reproduce, fix, test,
+   adversarial review, then fork, push, `gh pr create`, issue comment. Its last
+   act is writing a run record to `pr-draft.md` — outcome, PR URL, test
+   evidence. That file's existence is the completion signal.
 5. **Reconcile** — the next `dispatch` classifies each job: session gone plus a
-   draft means done; gone without one means work out why. Diffs are re-measured
-   with `git diff --numstat` rather than believed from the agent, and anything
-   over the repo's file/line ceiling is refused.
-6. **You** — read the drafts, bin the wrong ones, open the rest yourself.
+   record means done; gone without one means work out why. Diffs are re-measured
+   with `git diff --numstat` rather than believed from the agent.
+6. **You** — read the run records and the PRs that are already open.
 
-### What it will not do
+### Guardrails, and what's left of them
 
-Hard rules, given to every dispatched agent and backed by the absence of any code
-path that could break them: no `git push`, no `gh pr create`, no issue comments,
-labels, or closes, no remote or tag changes.
+Still enforced by the code: worktree isolation per job, a WIP limit, launch caps,
+resume caps, and an inert-by-default dispatch that needs `--live` to invoke a
+real model. `--live` also refuses to start if the `ferb` skill isn't installed,
+rather than letting an unattended agent improvise its own contribution loop.
 
-An agent that can push unattended can embarrass you on someone else's repo at 3am.
+Still instructed, and load-bearing: push to a **fork**, never to upstream and
+never to `main`; no AI attribution in commits, PR bodies, or issue comments;
+don't invent scope.
+
+**Weakened by shipping unattended:** the per-repo file/line ceilings. graveyard
+re-measures the diff, but the agent pushes before that check runs, so an
+oversized PR is already public by the time the ceiling notices. The ceiling is
+now a strong hint to the agent, not a gate. Treated honestly rather than quietly.
+
+An agent that can push unattended can embarrass you on someone else's repo at
+3am. That is the trade this configuration makes on purpose.
+
+## Skill dependency: `ferb`
+
+**Required.** graveyard's dispatch prompt does not describe how to fix an issue;
+it delegates the entire contribution loop to the `ferb` skill and only adds
+adaptations for running unattended in a worktree (use the pre-made branch, push
+to a fork rather than upstream, write the run record last).
+
+Install it at:
+
+```
+~/.claude/skills/ferb/SKILL.md
+```
+
+`gm dispatch --live` checks for that path and exits non-zero if it's missing.
+Set `MK_FLEET_AGENT_CMD` to launch something else instead and the check is
+skipped.
+
+What ferb contributes that graveyard deliberately does not reimplement:
+
+- a **Phase 0 go/no-go gate** biased toward declining — platform-specific bugs
+  that can't be reproduced on this machine, already-claimed issues, undecided
+  maintainer threads, repos that ban AI contributions, and dead repos are all
+  hard stops before any code is written;
+- a regression test as a non-optional shipping requirement;
+- an adversarial `critic` pass over the diff before the PR opens;
+- per-phase model and effort assignment, and its own escalation rules.
+
+That gate is the main thing standing between an unattended fleet and a pile of
+noise in someone's issue tracker, which is why it's a hard dependency and not a
+soft one.
 
 ## Honest status
 
-It works end to end, at n=2. First live run is written up in
+The scheduler works end to end, at n=2. First live run is written up in
 [`analysis/run-01.md`](analysis/run-01.md).
 
 **What's proven.** WIP limits hold. Worktree isolation holds. Diff ceilings hold
@@ -96,6 +143,11 @@ jobs recorded `approval_wait_ms = 0`, which is the entire thesis.
 
 **What isn't.**
 
+- **The shipping configuration has never run.** `analysis/run-01.md` was produced
+  under the earlier design, where agents stopped at a local commit and a drafted
+  PR body. The `ferb` delegation, the fork push, `gh pr create`, and the issue
+  comment are wired but have **not** executed live even once. Every claim below
+  about the scheduler is measured; nothing about the shipping path is.
 - **The failure-handling half has never run.** Stall detection, resume, and the
   "out of credit, waiting won't help, wake a human" branch have fired exactly
   zero times against reality. They're tested against replayed transcripts only.
@@ -111,8 +163,9 @@ jobs recorded `approval_wait_ms = 0`, which is the entire thesis.
 
 ## Install
 
-Needs [Bun](https://bun.sh), `git`, `tmux`, `gh`, and an agent CLI on `PATH`.
-No npm dependencies — SQLite comes from `bun:sqlite`.
+Needs [Bun](https://bun.sh), `git`, `tmux`, an authenticated `gh`, an agent CLI on
+`PATH`, and the [`ferb` skill](#skill-dependency-ferb) installed. No npm
+dependencies — SQLite comes from `bun:sqlite`.
 
 ```
 git clone https://github.com/MaheshBhushan/graveyard

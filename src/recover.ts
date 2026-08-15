@@ -18,10 +18,21 @@ import { classifyQuotaKind, extractResetHint, OVERLOAD_PAT, QUOTA_PAT, resolveRe
 // which counts fresh launches, not resumes of an already-launched session.
 export const RESUME_CAP = 3;
 
+// Dispatched sessions run Opus 5 at low effort, on a fresh launch and on resume
+// alike. Low is deliberate: the prompt delegates to the `ferb` skill, which
+// dispatches its own phases at their own models and efforts, so the top-level
+// session is an orchestrator rather than the thing doing the deep reasoning.
+// Paying high effort at this layer would buy nothing and multiply across every
+// job in the fleet. Defined here rather than in dispatch.ts because dispatch
+// imports this module, and the reverse would be a cycle.
+export const AGENT_MODEL = "claude-opus-5";
+export const AGENT_EFFORT = "low";
+
 // Sent to `claude --continue` on resume. Deliberately generic: the resumed
-// session already has the original dispatch-agent.md prompt (with its
-// no-push instructions) in its history, so this only needs to nudge it back
-// into motion, matching cc-continue's CC_PROMPT default.
+// session already has the original dispatch-agent.md prompt (and with it the
+// `ferb` skill it was told to drive, plus the fork/attribution addenda) in its
+// history, so this only needs to nudge it back into motion, matching
+// cc-continue's CC_PROMPT default.
 export const RESUME_PROMPT = "continue where you left off";
 
 export type StallClassification =
@@ -143,7 +154,7 @@ export function resumeAgentCommand(logPath: string, live: boolean): string {
   const cmd = override
     ? override
     : live
-      ? `claude --continue --dangerously-skip-permissions --model claude-opus-5 -p "${RESUME_PROMPT}"`
+      ? `claude --continue --dangerously-skip-permissions --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "${RESUME_PROMPT}"`
       : `echo "mk-fleet: inert resume -- pass --live (or set MK_FLEET_AGENT_CMD) to invoke a real agent"`;
   return `${cmd} >> ${logPath} 2>&1`;
 }

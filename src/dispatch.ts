@@ -19,6 +19,8 @@ import { listJobs, transitionJob, type Job, type JobState } from "./queue.ts";
 import { renderDashboard } from "./render.ts";
 import { resolveTheme } from "./theme.ts";
 import {
+  AGENT_EFFORT,
+  AGENT_MODEL,
   classifyStall,
   currentAttemptLog,
   RESUME_CAP,
@@ -301,9 +303,15 @@ async function removeWorktree(srcRepo: string, wt: string): Promise<void> {
 // ---- the agent command line ------------------------------------------------
 //
 // Permissions are bypassed on purpose: this runs unattended, so there is no
-// human to approve tool calls. What makes that acceptable is (a) the agent is
-// confined to a throwaway worktree and (b) the no-push/no-PR rule above, which
-// this file has no code to violate.
+// human to approve tool calls.
+//
+// The blast radius used to be closed on both sides: a throwaway worktree plus a
+// hard no-push/no-PR rule, so the worst case stayed on this disk. That second
+// half is gone -- the prompt now delegates to the `ferb` skill, which pushes to
+// a fork, opens the PR, and comments on the issue as its final phase. So a
+// dispatched agent CAN act publicly, with no human between it and the repo, and
+// the only remaining brakes are ferb's own Phase 0 go/no-go gate and its rules.
+// Worth being blunt about in the place where the permission bypass is chosen.
 //
 // Invoking a real agent requires an explicit opt-in: either --live, or
 // MK_FLEET_AGENT_CMD naming the command to run instead. Without one of those,
@@ -320,9 +328,19 @@ export function agentCommand(promptPath: string, logPath: string, live: boolean)
   const cmd = override
     ? override
     : live
-      ? `claude --dangerously-skip-permissions --model claude-opus-5 -p "$(cat ${promptPath})"`
+      ? `claude --dangerously-skip-permissions --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "$(cat ${promptPath})"`
       : `echo "mk-fleet: inert run -- pass --live (or set MK_FLEET_AGENT_CMD) to invoke a real agent"`;
   return `${cmd} >> ${logPath} 2>&1`;
+}
+
+// The dispatch prompt delegates the whole contribution loop to the `ferb` skill,
+// so a fleet running without it installed would silently fall back to whatever
+// the model improvises -- which is exactly the unattended-and-unbounded case the
+// rest of this file exists to prevent. Checked once per invocation, not per job.
+export const FERB_SKILL_PATH = join(homedir(), ".claude", "skills", "ferb", "SKILL.md");
+
+export function ferbInstalled(): boolean {
+  return existsSync(FERB_SKILL_PATH);
 }
 
 // ---- dispatch --------------------------------------------------------------
@@ -783,6 +801,14 @@ export async function runDispatch(db: Database): Promise<void> {
   }
   if (wip > DEFAULT_WIP) {
     console.error(`note: --wip ${wip} exceeds the measured safe limit of ${DEFAULT_WIP}`);
+  }
+  // A live fleet without ferb installed would improvise its own contribution
+  // loop, unattended, with push rights. Refuse rather than degrade.
+  if (live && !process.env.MK_FLEET_AGENT_CMD && !ferbInstalled()) {
+    console.error(`the ferb skill is required for --live but was not found at ${FERB_SKILL_PATH}`);
+    console.error("install it, or set MK_FLEET_AGENT_CMD to launch something else");
+    process.exitCode = 1;
+    return;
   }
 
   // Idempotent ADD COLUMN only; --dry-run does no row writes beyond this.
