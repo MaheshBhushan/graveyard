@@ -1,0 +1,16 @@
+{
+  "name": "mk-fleet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "backfill": "bun run src/backfill.ts",
+    "cli": "bun run src/cli.ts",
+    "dispatch": "bun run src/dispatch.ts",
+    "test": "bun test"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
