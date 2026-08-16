@@ -6,7 +6,14 @@ import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addJob, clearJobs, countByState, parseIssueRef, transitionJob } from "../src/queue.ts";
+import {
+  addJob,
+  clearJobs,
+  countByState,
+  parseIssueRef,
+  requeueJobs,
+  transitionJob,
+} from "../src/queue.ts";
 
 describe("parseIssueRef", () => {
   test("the plain copied URL", () => {
@@ -130,5 +137,84 @@ describe("clearJobs", () => {
     const db = seeded();
     clearJobs(db);
     expect(clearJobs(db).cleared).toHaveLength(0);
+  });
+});
+
+// `gm requeue` is the way back for a job that blocked on something fixed outside
+// the queue -- a missing repos.yaml entry, a wrong base branch. The reset of the
+// retry counters is the substance of it, not tidying: `failed` is reached
+// *because* those counters are exhausted.
+describe("requeueJobs", () => {
+  function exhausted(): Database {
+    const db = new Database(":memory:");
+    db.exec(readFileSync(join(import.meta.dir, "..", "schema.sql"), "utf8"));
+    addJob(db, { repo: "a/b", issue_number: 1, task_source: "test" });
+    transitionJob(db, "a__b-1", "failed", {
+      ended_at: "2026-08-16T10:00:00.000Z",
+      last_error: "resume cap (3) reached",
+      attempts: 3,
+    });
+    db.query("UPDATE jobs SET resume_count = 3, worktree_path = '/tmp/wt', branch = 'fix/issue-1'")
+      .run();
+    return db;
+  }
+
+  test("a requeued job gets its full retry allowance back", () => {
+    const db = exhausted();
+    expect(requeueJobs(db).requeued).toEqual([{ job_id: "a__b-1", from: "failed" }]);
+    const row = db.query("SELECT * FROM jobs WHERE job_id = 'a__b-1'").get() as Record<
+      string,
+      unknown
+    >;
+    expect(row.state).toBe("queued");
+    expect(row.attempts).toBe(0);
+    expect(row.resume_count).toBe(0);
+    // Cleared so the next dispatch recomputes them -- this is how a job picks up
+    // a branch_pattern that changed while it sat blocked.
+    expect(row.worktree_path).toBeNull();
+    expect(row.branch).toBeNull();
+    // A stale error on a queued row would render as a live failure in `watch`.
+    expect(row.last_error).toBeNull();
+    expect(row.ended_at).toBeNull();
+  });
+
+  test("sweeps blocked and failed, leaves everything else", () => {
+    const db = seeded();
+    const res = requeueJobs(db);
+    expect(res.requeued.map((r) => r.from).sort()).toEqual(["blocked", "failed"]);
+    const after = countByState(db);
+    expect(after.queued).toBe(3); // the original queued one plus the two revived
+    expect(after.done).toBe(2); // untouched
+    expect(after.running).toBe(1);
+  });
+
+  test("refuses a running job, since an agent is live on it", () => {
+    const db = seeded();
+    const res = requeueJobs(db, { states: ["running"] });
+    expect(res.requeued).toHaveLength(0);
+    expect(res.kept[0].why).toContain("still running");
+    expect(countByState(db).running).toBe(1);
+  });
+
+  test("a done job is skipped by a bare requeue but honoured when named", () => {
+    const db = seeded();
+    expect(requeueJobs(db).requeued.some((r) => r.from === "done")).toBe(false);
+    const res = requeueJobs(db, { jobIds: ["a__b-1"] });
+    expect(res.requeued).toEqual([{ job_id: "a__b-1", from: "done" }]);
+  });
+
+  test("dry run reports without touching anything", () => {
+    const db = exhausted();
+    expect(requeueJobs(db, { dryRun: true }).requeued).toHaveLength(1);
+    const row = db.query("SELECT state, attempts FROM jobs").get() as Record<string, unknown>;
+    expect(row.state).toBe("failed");
+    expect(row.attempts).toBe(3);
+  });
+
+  test("an unknown job id is reported, not silently ignored", () => {
+    const db = seeded();
+    const res = requeueJobs(db, { jobIds: ["nope/whatever-9"] });
+    expect(res.requeued).toHaveLength(0);
+    expect(res.kept).toHaveLength(0);
   });
 });

@@ -301,3 +301,34 @@ describe("renderWatch header", () => {
     expect(out).not.toContain("failed");
   });
 });
+
+describe("no-supervisor warning", () => {
+  // `watch` reconciles but never dispatches, so a queue with nobody working it
+  // renders as a calm `wip 0/3` -- identical to a fleet with nothing to do.
+  test("flags an unattended queue that has work in it", () => {
+    const out = renderWatch(
+      model({ jobs: [job({ state: "queued" })], supervised: false }),
+      Date.parse("2026-08-16T13:21:00.000Z"),
+      ASCII,
+    );
+    expect(out).toContain("NO SUPERVISOR");
+  });
+
+  test("stays quiet when a supervisor is running", () => {
+    const out = renderWatch(
+      model({ jobs: [job({ state: "queued" })], supervised: true }),
+      Date.parse("2026-08-16T13:21:00.000Z"),
+      ASCII,
+    );
+    expect(out).not.toContain("NO SUPERVISOR");
+  });
+
+  test("stays quiet on an empty queue -- that is just an idle machine", () => {
+    const out = renderWatch(
+      model({ jobs: [job({ state: "done" })], supervised: false }),
+      Date.parse("2026-08-16T13:21:00.000Z"),
+      ASCII,
+    );
+    expect(out).not.toContain("NO SUPERVISOR");
+  });
+});

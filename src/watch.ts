@@ -8,6 +8,9 @@
 
 import type { Database } from "bun:sqlite";
 import { reconcileOnly } from "./dispatch.ts";
+// supervisor.ts imports dispatch.ts and queue.ts, never watch.ts, so this does
+// not close a cycle.
+import { activeSupervisor } from "./supervisor.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -112,6 +115,10 @@ export interface WatchModel {
   logSource: string;
   wip: number;
   paused: boolean;
+  /** whether a supervisor is actually working this queue. `watch` reconciles but
+   *  never dispatches, so without one a queue sits at `wip 0/n` forever --
+   *  which looks exactly like an idle fleet with nothing to do. */
+  supervised?: boolean;
 }
 
 // ---- scrolling --------------------------------------------------------------
@@ -377,6 +384,9 @@ export function renderWatch(model: WatchModel, now: number, theme: Theme): strin
     `   go ${gos}   no-go ${nogos}` +
     (counts.blocked ? `   blocked ${counts.blocked}` : "") +
     (counts.failed ? `   failed ${counts.failed}` : "") +
+    // Only worth saying when there is work stranded by it. An empty queue with
+    // no supervisor is just an idle machine, not a problem to report.
+    (model.supervised === false && (counts.queued ?? 0) > 0 ? "   NO SUPERVISOR" : "") +
     (model.paused ? "   PAUSED" : "");
 
   const sel = model.jobs[model.selected];
@@ -582,6 +592,7 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
         logSource: sel ? `${sel.job_id}/${logName}` : "(no job selected)",
         wip: opts.wip,
         paused,
+        supervised: activeSupervisor() != null,
       };
 
       const screen = renderWatch(model, Date.now(), theme);

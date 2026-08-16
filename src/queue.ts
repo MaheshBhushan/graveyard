@@ -162,6 +162,100 @@ export function clearJobs(
   return { cleared, kept };
 }
 
+// ---- requeue ----------------------------------------------------------------
+//
+// The counterpart to clearJobs: put a stopped job back in line instead of
+// dropping it. The case this exists for is a job that blocked on a config
+// problem -- no repos.yaml entry, wrong ceilings -- which is fixed outside the
+// queue and leaves the row stranded with no way back.
+export const REQUEUABLE_STATES = ["blocked", "failed"] as const;
+
+export interface RequeueResult {
+  requeued: { job_id: string; from: string }[];
+  /** asked for but refused, with why. */
+  kept: { job_id: string; state: string; why: string }[];
+}
+
+/** Reset stopped jobs to `queued`.
+ *
+ *  Resetting the retry counters is the whole point, not housekeeping: `failed`
+ *  is reached *because* attempts hit MAX_ATTEMPTS or resume_count hit
+ *  RESUME_CAP, so a requeue that left them alone would launch once and fail on
+ *  the first hiccup. The worktree bookkeeping is cleared too, so the next
+ *  dispatch recomputes the branch and base ref -- which is how a job picks up a
+ *  `branch_pattern` or `default_branch` that changed while it sat blocked. */
+export function requeueJobs(
+  db: Database,
+  opts: { states?: readonly string[]; jobIds?: readonly string[]; dryRun?: boolean } = {},
+): RequeueResult {
+  const want = opts.states?.length ? opts.states : REQUEUABLE_STATES;
+  const rows = db.query("SELECT job_id, state FROM jobs").all() as {
+    job_id: string;
+    state: string;
+  }[];
+
+  const requeued: { job_id: string; from: string }[] = [];
+  const kept: { job_id: string; state: string; why: string }[] = [];
+
+  for (const r of rows) {
+    const named = opts.jobIds?.length ? opts.jobIds.includes(r.job_id) : want.includes(r.state);
+    if (!named) continue;
+
+    if (r.state === "running") {
+      kept.push({ ...r, why: "still running -- `gm stop` and let it reconcile first" });
+      continue;
+    }
+    if (r.state === "queued") {
+      kept.push({ ...r, why: "already queued" });
+      continue;
+    }
+    // parked resumes itself and done succeeded, so neither is swept up by a bare
+    // `requeue`. Naming one explicitly is a deliberate choice to spend again.
+    if (r.state === "parked" && !opts.jobIds?.length && !opts.states?.length) {
+      kept.push({ ...r, why: "parked -- it resumes itself; name it to override" });
+      continue;
+    }
+    if (r.state === "done" && !opts.jobIds?.length && !opts.states?.length) {
+      kept.push({ ...r, why: "already done -- name it to run it again" });
+      continue;
+    }
+    requeued.push({ job_id: r.job_id, from: r.state });
+  }
+
+  if (!opts.dryRun && requeued.length > 0) {
+    const cols = new Set(
+      (db.query("PRAGMA table_info(jobs)").all() as { name: string }[]).map((r) => r.name),
+    );
+    // Only clear columns this database actually has: the dispatch bookkeeping is
+    // added by a migration, so a queue that has never dispatched lacks them.
+    const optional = [
+      "worktree_path",
+      "branch",
+      "base_ref",
+      "tmux_session",
+      "pr_draft_path",
+      "resume_after",
+      "resume_count",
+    ].filter((c) => cols.has(c));
+
+    const sets = [
+      "state = 'queued'",
+      "started_at = NULL",
+      "ended_at = NULL",
+      "last_error = NULL",
+      "attempts = 0",
+      ...optional.map((c) => (c === "resume_count" ? "resume_count = 0" : `${c} = NULL`)),
+    ];
+    const stmt = db.prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE job_id = $id`);
+    const tx = db.transaction((ids: string[]) => {
+      for (const id of ids) stmt.run({ $id: id });
+    });
+    tx(requeued.map((r) => r.job_id));
+  }
+
+  return { requeued, kept };
+}
+
 export function countByState(db: Database): Record<string, number> {
   const rows = db.query("SELECT state, COUNT(*) as n FROM jobs GROUP BY state").all() as {
     state: string;

@@ -12,6 +12,7 @@
 //   gm list [--state <s>] [--json]
 //   gm status
 //   gm clear [--state <s,s>] [--purge] [--dry-run]
+//   gm requeue [<job-id | issue-url>] [--state <s,s>] [--dry-run]
 //   gm dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
 //
 // The normal loop is: add, start, watch. `start` runs the fleet until stopped
@@ -34,7 +35,16 @@ import {
   REPOS_YAML_PATH,
   runDispatch,
 } from "./dispatch.ts";
-import { addJob, clearJobs, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
+import {
+  addJob,
+  clearJobs,
+  countByState,
+  jobId,
+  listJobs,
+  parseIssueRef,
+  requeueJobs,
+  type JobState,
+} from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { nudge, runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
@@ -54,7 +64,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "clear", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
+  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -283,6 +293,43 @@ function cmdList(): void {
   }
 }
 
+function cmdRequeue(): void {
+  const dryRun = process.argv.includes("--dry-run");
+  const stateArg = argVal("--state");
+  const states = stateArg ? stateArg.split(",").map((s) => s.trim()) : undefined;
+
+  // A bare positional is a job id or an issue URL, since after `gm add <url>`
+  // the URL is the identifier the person still has in their scrollback.
+  const bare = positionalAfter("requeue");
+  let jobIds: string[] | undefined;
+  if (bare) {
+    const ref = parseIssueRef(bare);
+    jobIds = [ref ? jobId(ref.repo, ref.issue_number) : bare];
+  }
+
+  const res = requeueJobs(db, { states, jobIds, dryRun });
+
+  for (const k of res.kept) console.error(`kept ${k.job_id}: ${k.why}`);
+
+  if (res.requeued.length === 0) {
+    if (jobIds && res.kept.length === 0) {
+      console.error(`no such job: ${jobIds[0]}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("nothing to requeue");
+    return;
+  }
+
+  const verb = dryRun ? "would requeue" : "requeued";
+  console.log(`${verb} ${res.requeued.length} job(s):`);
+  for (const r of res.requeued) console.log(`  ${r.job_id} (was ${r.from})`);
+  if (dryRun) return;
+
+  console.log("  retry counters reset, so each gets its full allowance again");
+  nudgeAfterAdd(res.requeued.length);
+}
+
 function cmdClear(): void {
   const dryRun = process.argv.includes("--dry-run");
   const purge = process.argv.includes("--purge");
@@ -353,6 +400,9 @@ switch (subcommand) {
     break;
   case "clear":
     cmdClear();
+    break;
+  case "requeue":
+    cmdRequeue();
     break;
   case "start": {
     // start means start: live unless explicitly told to rehearse.

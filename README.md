@@ -278,8 +278,9 @@ The rest:
 gm add Textualize/rich#4196        # short form
 gm add --from-gh Textualize/rich   # bulk: every open issue with a bug label
 gm list                            # the queue, non-interactive
-gm status                          # counts by state
+gm status                          # counts by state, plus the config paths
 gm clear                           # drop finished jobs from the queue
+gm requeue                         # put blocked/failed jobs back in line
 gm stop                            # stop the supervisor
 gm dispatch --live                 # one pass, no loop (what `start` runs on a tick)
 ```
@@ -295,6 +296,27 @@ resume into its existing worktree. Run records under `runs/<job>/` are kept by
 default, because the Phase 0 verdicts and reports in them are the output of
 having run at all; `--purge` removes those too. `--dry-run` lists first, and
 `--state done` narrows it.
+
+`gm requeue` is the other direction: it puts `blocked` and `failed` jobs back to
+`queued`, which is what you want after fixing the thing that stopped them — a
+missing `repos.yaml` entry, a wrong `default_branch`. It **resets the retry
+counters**, and that is the substance rather than housekeeping: a job reaches
+`failed` precisely *because* its attempts are exhausted, so a requeue that left
+them alone would fail again on the first hiccup. It also clears the worktree and
+branch bookkeeping, so the next dispatch recomputes them and the job picks up a
+`branch_pattern` that changed while it sat blocked.
+
+```bash
+gm requeue                                  # every blocked and failed job
+gm requeue https://github.com/o/n/issues/42  # one, by URL or job id
+gm requeue --state done                     # deliberate: run a finished job again
+gm requeue --dry-run                        # list first
+```
+
+A `running` job is refused outright. `parked` and `done` are skipped by a bare
+`requeue` — one resumes itself, the other already succeeded — but honoured when
+you name them, since re-running a `done` job means spending tokens again on
+purpose.
 
 State lives in SQLite at `~/.local/share/mk-fleet/fleet.sqlite`, overridable with
 `--db <path>`.
