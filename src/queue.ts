@@ -118,6 +118,50 @@ export function listJobs(db: Database, opts: { state?: JobState } = {}): Job[] {
     .all() as Job[];
 }
 
+// States a job can be cleared from: it has stopped and nothing is coming back
+// for it. `running` and `parked` are deliberately absent -- running has a live
+// agent behind it, and parked is waiting to be resumed into the same worktree,
+// so dropping either would orphan real work.
+export const CLEARABLE_STATES = ["done", "failed", "blocked"] as const;
+export type ClearableState = (typeof CLEARABLE_STATES)[number];
+
+export interface ClearResult {
+  cleared: { job_id: string; state: string }[];
+  /** jobs asked for but refused because they are still live. */
+  kept: { job_id: string; state: string }[];
+}
+
+/** Drop finished jobs from the queue. Rows only -- the run records under
+ *  runs/<job_id>/ hold the Phase 0 verdicts and reports, which are the point of
+ *  having run at all, so removing those is the caller's separate decision. */
+export function clearJobs(
+  db: Database,
+  opts: { states?: readonly string[]; dryRun?: boolean } = {},
+): ClearResult {
+  const want = opts.states?.length ? opts.states : CLEARABLE_STATES;
+  const rows = db.query("SELECT job_id, state FROM jobs").all() as { job_id: string; state: string }[];
+
+  const cleared: { job_id: string; state: string }[] = [];
+  const kept: { job_id: string; state: string }[] = [];
+  for (const r of rows) {
+    if (!want.includes(r.state)) continue;
+    if (!(CLEARABLE_STATES as readonly string[]).includes(r.state)) {
+      kept.push(r);
+      continue;
+    }
+    cleared.push(r);
+  }
+
+  if (!opts.dryRun && cleared.length > 0) {
+    const del = db.query("DELETE FROM jobs WHERE job_id = $id");
+    const tx = db.transaction((ids: string[]) => {
+      for (const id of ids) del.run({ $id: id });
+    });
+    tx(cleared.map((c) => c.job_id));
+  }
+  return { cleared, kept };
+}
+
 export function countByState(db: Database): Record<string, number> {
   const rows = db.query("SELECT state, COUNT(*) as n FROM jobs GROUP BY state").all() as {
     state: string;

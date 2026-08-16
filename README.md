@@ -203,7 +203,7 @@ is `@types/bun`.
 ```bash
 git clone https://github.com/MaheshBhushan/graveyard
 cd graveyard
-bun test                                 # 47 tests, no install step
+bun test                                 # 52 tests, no install step
 ln -s "$PWD/bin/gm" ~/.local/bin/gm         # must be on your PATH
 ln -s "$PWD/bin/gm" ~/.local/bin/graveyard  # same tool, longer name
 ```
@@ -235,6 +235,7 @@ gm add Textualize/rich#4196        # short form
 gm add --from-gh Textualize/rich   # bulk: every open issue with a bug label
 gm list                            # the queue, non-interactive
 gm status                          # counts by state
+gm clear                           # drop finished jobs from the queue
 gm stop                            # stop the supervisor
 gm dispatch --live                 # one pass, no loop (what `start` runs on a tick)
 ```
@@ -242,6 +243,14 @@ gm dispatch --live                 # one pass, no loop (what `start` runs on a t
 Adding by URL looks the title up through `gh`, and re-adding the same issue in
 any form collides on the same deterministic job id rather than queueing it
 twice. Every command also answers to `graveyard` if you'd rather type it out.
+
+`gm clear` drops everything finished — done, failed and blocked — so the queue
+shows only what's still ahead of you. It refuses to touch a `running` or
+`parked` job, since one has a live agent behind it and the other is waiting to
+resume into its existing worktree. Run records under `runs/<job>/` are kept by
+default, because the Phase 0 verdicts and reports in them are the output of
+having run at all; `--purge` removes those too. `--dry-run` lists first, and
+`--state done` narrows it.
 
 State lives in SQLite at `~/.local/share/mk-fleet/fleet.sqlite`, overridable with
 `--db <path>`.
@@ -280,7 +289,7 @@ src/recover.ts         stall classification and resume decisions
 src/render.ts          terminal rendering (pure, snapshot-tested)
 src/supervisor.ts      the `start` loop: tick, refill, pidfile, stop
 src/watch.ts           live TUI: phase 0 verdicts + log pane
-test/                  47 tests over the pure renderers, parsers and refs
+test/                  52 tests over the renderers, parsers, refs and the queue
 analysis/              the go/no-go gate, and the two live runs
 ```
 

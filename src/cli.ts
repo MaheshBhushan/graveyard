@@ -11,6 +11,7 @@
 //   gm stop
 //   gm list [--state <s>] [--json]
 //   gm status
+//   gm clear [--state <s,s>] [--purge] [--dry-run]
 //   gm dispatch [--wip <n>] [--max-jobs <n>] [--dry-run] [--live] [--repo <owner/name>]
 //
 // The normal loop is: add, start, watch. `start` runs the fleet until stopped
@@ -23,11 +24,11 @@
 // Global flag: --db <path> (default ~/.local/share/mk-fleet/fleet.sqlite)
 
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readBugLabels, runDispatch } from "./dispatch.ts";
-import { addJob, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
+import { addJob, clearJobs, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
@@ -47,7 +48,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
+  ["add", "list", "status", "clear", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -234,6 +235,53 @@ function cmdList(): void {
   }
 }
 
+function cmdClear(): void {
+  const dryRun = process.argv.includes("--dry-run");
+  const purge = process.argv.includes("--purge");
+  const stateArg = argVal("--state");
+  const states = stateArg ? stateArg.split(",").map((s) => s.trim()) : undefined;
+
+  const res = clearJobs(db, { states, dryRun });
+
+  for (const k of res.kept) {
+    console.error(`kept ${k.job_id}: still ${k.state} -- ${k.state === "parked" ? "waiting to resume" : "an agent is live"}`);
+  }
+  if (res.cleared.length === 0) {
+    console.log(states ? `nothing to clear in ${states.join(", ")}` : "nothing to clear");
+    return;
+  }
+
+  const byState: Record<string, number> = {};
+  for (const c of res.cleared) byState[c.state] = (byState[c.state] ?? 0) + 1;
+  const summary = Object.entries(byState)
+    .map(([s, n]) => `${n} ${s}`)
+    .join(", ");
+
+  if (dryRun) {
+    console.log(`would clear ${res.cleared.length} job(s): ${summary}`);
+    for (const c of res.cleared) console.log(`  ${c.job_id}`);
+    return;
+  }
+
+  let purged = 0;
+  if (purge) {
+    for (const c of res.cleared) {
+      const dir = join(homedir(), ".local", "share", "mk-fleet", "runs", c.job_id);
+      if (!existsSync(dir)) continue;
+      rmSync(dir, { recursive: true, force: true });
+      purged++;
+    }
+  }
+
+  console.log(`cleared ${res.cleared.length} job(s): ${summary}`);
+  console.log(
+    purge
+      ? `  and removed ${purged} run record director${purged === 1 ? "y" : "ies"}`
+      : "  run records kept (verdicts and reports); --purge removes those too",
+  );
+  console.log("  re-add any of them with `gm add <issue-url>`");
+}
+
 function cmdStatus(): void {
   const counts = countByState(db);
   const states: JobState[] = ["queued", "running", "done", "failed", "blocked"];
@@ -249,6 +297,9 @@ switch (subcommand) {
     break;
   case "status":
     cmdStatus();
+    break;
+  case "clear":
+    cmdClear();
     break;
   case "start": {
     // start means start: live unless explicitly told to rehearse.
@@ -298,7 +349,7 @@ switch (subcommand) {
     break;
   }
   default:
-    console.error(`usage: ${SELF} <add|start|watch|stop|list|status|dispatch> [flags]`);
+    console.error(`usage: ${SELF} <add|start|watch|stop|list|status|clear|dispatch> [flags]`);
     console.error("");
     console.error(`  add <issue-url | owner/name#n>   queue an issue`);
     console.error(`  start [--wip <n>] [--tick <s>]   run the fleet until stopped -- SPENDS TOKENS`);
@@ -306,6 +357,7 @@ switch (subcommand) {
     console.error("  stop                             stop the fleet (running agents finish)");
     console.error("  list [--state <s>] [--json]      the queue");
     console.error("  status                           counts by state");
+    console.error("  clear [--purge] [--dry-run]      drop finished jobs from the queue");
     console.error("");
     console.error(`  start runs live by default; --dry launches no-ops instead.`);
     console.error("  start defaults: --wip 3 (measured safe concurrency), --tick 30 (seconds)");
