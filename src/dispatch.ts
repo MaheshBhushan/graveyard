@@ -99,6 +99,9 @@ export interface RepoConfig {
   max_files_changed: number | null;
   max_lines_changed: number | null;
   max_prs_per_week: number | null;
+  /** Optional branch name template, `{n}` = issue number. Absent means the
+   *  `fix/issue-{n}` default; set it for repos that publish a convention. */
+  branch_pattern: string | null;
 }
 
 function unquote(s: string): string {
@@ -167,6 +170,7 @@ export function readRepoConfig(repo: string): RepoConfig | null {
     max_files_changed: num("max_files_changed"),
     max_lines_changed: num("max_lines_changed"),
     max_prs_per_week: num("max_prs_per_week"),
+    branch_pattern: scalars["branch_pattern"] ?? null,
   };
 }
 
@@ -271,7 +275,15 @@ function runDir(jobId: string): string {
   return join(RUNS_ROOT, jobId);
 }
 
-export function branchName(job: DispatchJob): string {
+// `fix/issue-42` is a fine default and a guaranteed rejection in repos that
+// publish a branch convention -- opencode's AGENTS.md bans slashes and `fix/`
+// prefixes outright. repos.yaml can override it per repo with `{n}` standing in
+// for the issue number.
+export function branchName(job: DispatchJob, pattern?: string | null): string {
+  if (pattern) {
+    const slug = job.issue_number != null ? String(job.issue_number) : job.job_id;
+    return pattern.replace(/\{n\}/g, slug);
+  }
   return job.issue_number != null ? `fix/issue-${job.issue_number}` : `fix/${job.job_id}`;
 }
 
@@ -688,7 +700,7 @@ async function buildPlan(job: DispatchJob, reposDir: string, live: boolean): Pro
     cfg,
     srcRepo,
     baseRef,
-    branch: branchName(job),
+    branch: branchName(job, cfg.branch_pattern),
     worktree: worktreePath(job.job_id),
     promptPath,
     logPath,

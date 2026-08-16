@@ -12,7 +12,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { dispatchOnce, resolveFleetFlags } from "./dispatch.ts";
 import { countByState } from "./queue.ts";
 
@@ -21,6 +21,13 @@ export const PID_PATH = join(FLEET_HOME, "graveyard.pid");
 export const SUPERVISOR_LOG = join(FLEET_HOME, "supervisor.log");
 
 const DEFAULT_TICK_MS = 30_000;
+
+// While something is queued behind a full WIP, the only thing standing between
+// it and a free slot is how often we look. A pass with nothing waiting costs a
+// `tmux has-session` per running job and two sqlite reads, so checking every few
+// seconds is affordable -- and it is what makes a finished job hand its slot
+// straight to the next in line rather than leaving it empty for a whole tick.
+const BUSY_TICK_MS = 3_000;
 
 export interface PidFile {
   pid: number;
@@ -59,6 +66,30 @@ export function activeSupervisor(): PidFile | null {
   return null;
 }
 
+/** Ask a running supervisor to run its next pass now instead of at the end of
+ *  its tick. Returns the pid it woke, or null if nothing is running.
+ *
+ *  This exists so `gm add` with a free WIP slot starts work immediately. The
+ *  alternative -- having `gm add` launch the agent itself -- would mean two
+ *  processes counting the same WIP slots, which is how you double-spend on one
+ *  issue. Only the supervisor ever launches; `add` just taps it on the
+ *  shoulder. */
+export function nudge(dbPath: string): number | null {
+  const rec = activeSupervisor();
+  if (!rec) return null;
+  // A supervisor watching another database cannot dispatch the row we just
+  // wrote, and signalling it would report "starting now" about a queue it
+  // cannot see. Caught the first time this ran: a --db pointed at a scratch
+  // file woke the supervisor working the real one.
+  if (resolve(rec.db) !== resolve(dbPath)) return null;
+  try {
+    process.kill(rec.pid, "SIGUSR1");
+    return rec.pid;
+  } catch {
+    return null;
+  }
+}
+
 // ---- the loop ---------------------------------------------------------------
 
 export interface SuperviseOpts {
@@ -84,12 +115,24 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
   process.on("SIGTERM", bye);
   process.on("SIGINT", bye);
 
+  // `gm add` sends SIGUSR1 so a new issue does not sit in the queue for the
+  // rest of the tick while a WIP slot stands empty.
+  let woken = false;
+  process.on("SIGUSR1", () => {
+    woken = true;
+  });
+
   const stamp = () => new Date().toISOString();
   const say = (s: string) => console.error(`${stamp()} ${s}`);
 
   say(`supervisor up: wip=${opts.wip} max-jobs=${opts.maxJobs} tick=${opts.tickMs}ms live=${opts.live}`);
 
   let idle = false;
+  let lastSig = "";
+  // How long to wait after the pass just finished. Recomputed each pass from
+  // what that pass saw, so a queue with work waiting is polled hard and an
+  // empty one is left alone.
+  let waitMs = opts.tickMs;
   while (!stop) {
     try {
       // Buffer the pass's diagnostics and only commit them if the pass did
@@ -97,6 +140,11 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
       // otherwise write thousands of identical "0 queued candidates" lines and
       // bury the tick that actually mattered.
       const buffered: string[] = [];
+      // Cleared before the pass, not before the sleep: a nudge that lands while
+      // this pass is already running still earns a pass of its own afterwards,
+      // rather than being swallowed by the one that was mid-flight when it
+      // arrived and missed the new row.
+      woken = false;
       const res = await dispatchOnce(db, {
         wip: opts.wip,
         maxJobs: opts.maxJobs,
@@ -105,10 +153,21 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
         say: (s) => buffered.push(s),
       });
 
+      // Something is queued behind a full WIP: the next free slot should go to
+      // it in seconds, not at the end of a 30s tick.
+      waitMs = res.queued > 0 ? Math.min(opts.tickMs, BUSY_TICK_MS) : opts.tickMs;
+
       const quiet = res.launched === 0 && res.alive === 0 && res.queued === 0;
       if (!quiet) {
         idle = false;
-        for (const line of buffered) say(line);
+        // At BUSY_TICK_MS a job that runs for ten minutes would otherwise
+        // reprint the same "left alone / launched 0" block 200 times. A pass
+        // earns log space by saying something the last one did not.
+        const sig = buffered.join("\n");
+        if (res.launched > 0 || sig !== lastSig) {
+          for (const line of buffered) say(line);
+          lastSig = sig;
+        }
       } else if (!idle) {
         // Idle is a normal state, not an end state: `gm add` during an idle
         // stretch is picked up on the next tick, no restart needed. Say so
@@ -122,9 +181,10 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
       say(`tick failed, continuing: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    for (let waited = 0; waited < opts.tickMs && !stop; waited += 250) {
+    for (let waited = 0; waited < waitMs && !stop && !woken; waited += 250) {
       await Bun.sleep(250);
     }
+    if (woken && !stop) say("woken by `gm add`; dispatching now");
   }
 
   say("supervisor down");

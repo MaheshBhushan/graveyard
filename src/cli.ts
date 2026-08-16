@@ -30,7 +30,7 @@ import { dirname, join } from "node:path";
 import { readBugLabels, readRepoConfig, runDispatch } from "./dispatch.ts";
 import { addJob, clearJobs, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
-import { runStart, runStop, supervise } from "./supervisor.ts";
+import { nudge, runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
 
@@ -102,6 +102,21 @@ function warnUnregistered(repo: string): void {
   console.error(`         add default_branch, test_command and diff ceilings for ${repo} first.`);
 }
 
+// A queued job with a free WIP slot in front of it should start now, not at the
+// end of whatever tick the supervisor happens to be in. Nudging is only
+// meaningful if something inserted -- and if nothing is supervising, say so,
+// because a queue nobody is working is the one failure `add` can actually
+// predict.
+function nudgeAfterAdd(inserted: number): void {
+  if (inserted === 0) return;
+  const pid = nudge(dbPath);
+  if (pid) {
+    console.log(`  supervisor (pid ${pid}) woken -- starting now if a slot is free`);
+    return;
+  }
+  console.log(`  nothing is running this queue yet: \`${SELF} start\` to begin`);
+}
+
 async function cmdAdd(): Promise<void> {
   const bare = positionalAfter("add");
   if (bare) {
@@ -125,6 +140,7 @@ async function cmdAdd(): Promise<void> {
     const shown = title ? ` ${title}` : "";
     console.log(`${res.job_id}${shown} -> ${res.inserted ? "queued" : "already present"}`);
     warnUnregistered(ref.repo);
+    nudgeAfterAdd(res.inserted ? 1 : 0);
     return;
   }
 
@@ -197,6 +213,7 @@ async function cmdAdd(): Promise<void> {
     }
     console.log(`${inserted} newly queued, ${issues.length - inserted} already present`);
     warnUnregistered(repo);
+    nudgeAfterAdd(inserted);
     return;
   }
 
@@ -223,6 +240,7 @@ async function cmdAdd(): Promise<void> {
   });
   console.log(`${res.job_id}: ${res.inserted ? "queued" : "already present"}`);
   warnUnregistered(repo);
+  nudgeAfterAdd(res.inserted ? 1 : 0);
 }
 
 function cmdList(): void {
