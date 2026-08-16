@@ -368,12 +368,15 @@ export function renderWatch(model: WatchModel, now: number, theme: Theme): strin
 
   // Blocked and failed jobs were in none of the counters, so with a refused job
   // in the queue the header added up to fewer jobs than the list below it --
-  // which reads as "the fleet is idle" rather than "something needs you".
-  const stuck = (counts.blocked ?? 0) + (counts.failed ?? 0);
+  // which reads as "the fleet is idle" rather than "something needs you". Kept
+  // as two counters, not one: blocked means a guardrail said no and the config
+  // needs a decision, failed means the run itself ran out of attempts. Same
+  // "the loop is done with it" status, completely different next action.
   const header =
     `  wip ${running}/${model.wip}   queued ${counts.queued ?? 0}   done ${counts.done ?? 0}` +
     `   go ${gos}   no-go ${nogos}` +
-    (stuck > 0 ? `   stuck ${stuck}` : "") +
+    (counts.blocked ? `   blocked ${counts.blocked}` : "") +
+    (counts.failed ? `   failed ${counts.failed}` : "") +
     (model.paused ? "   PAUSED" : "");
 
   const sel = model.jobs[model.selected];

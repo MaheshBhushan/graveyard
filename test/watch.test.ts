@@ -274,11 +274,30 @@ describe("renderWatch header", () => {
       ASCII,
     );
     expect(out).toContain("wip 1/3");
-    expect(out).toContain("stuck 1");
+    expect(out).toContain("blocked 1");
   });
 
-  test("no stuck counter when nothing is stuck", () => {
+  // One counter covering both would put a "blocked" label on a number that
+  // includes failures, and the two want different things done about them.
+  test("blocked and failed are counted apart", () => {
+    const out = renderWatch(
+      model({
+        jobs: [
+          job({ job_id: "a-1", state: "blocked", last_error: "no repos.yaml entry" }),
+          job({ job_id: "a-2", state: "failed", last_error: "resume cap reached" }),
+          job({ job_id: "a-3", state: "blocked", last_error: "diff ceiling breached" }),
+        ],
+      }),
+      Date.parse("2026-08-16T13:21:00.000Z"),
+      ASCII,
+    );
+    expect(out).toContain("blocked 2");
+    expect(out).toContain("failed 1");
+  });
+
+  test("neither counter appears when nothing is stuck", () => {
     const out = renderWatch(model(), Date.parse("2026-08-16T13:21:00.000Z"), ASCII);
-    expect(out).not.toContain("stuck");
+    expect(out).not.toContain("blocked");
+    expect(out).not.toContain("failed");
   });
 });
