@@ -27,7 +27,13 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { readBugLabels, readRepoConfig, runDispatch } from "./dispatch.ts";
+import {
+  DEFAULT_REPOS_DIR,
+  readBugLabels,
+  readRepoConfig,
+  REPOS_YAML_PATH,
+  runDispatch,
+} from "./dispatch.ts";
 import { addJob, clearJobs, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { nudge, runStart, runStop, supervise } from "./supervisor.ts";
@@ -97,7 +103,17 @@ async function fetchIssueTitle(repo: string, issue: number): Promise<string | nu
 // where the person who can fix it is still watching.
 function warnUnregistered(repo: string): void {
   if (readRepoConfig(repo)) return;
-  console.error(`warning: ${repo} has no entry in bugfix-loop/config/repos.yaml`);
+  // Name the file actually consulted, not a relative path from some other
+  // project. repos.yaml lives outside this repo by default and is env-
+  // overridable, so a hardcoded "bugfix-loop/config/repos.yaml" in the message
+  // sends people looking in the wrong place -- or for a repo they do not have.
+  if (!existsSync(REPOS_YAML_PATH)) {
+    console.error(`warning: no repos.yaml at ${REPOS_YAML_PATH}`);
+    console.error("         every job will be blocked at dispatch until one exists.");
+    console.error("         set MK_FLEET_REPOS_YAML to point at yours.");
+    return;
+  }
+  console.error(`warning: ${repo} has no entry in ${REPOS_YAML_PATH}`);
   console.error("         it will be queued but blocked at dispatch, never run.");
   console.error(`         add default_branch, test_command and diff ceilings for ${repo} first.`);
 }
@@ -318,6 +334,11 @@ function cmdStatus(): void {
   const counts = countByState(db);
   const states: JobState[] = ["queued", "running", "done", "failed", "blocked"];
   console.log(renderStatus(counts, states, resolveTheme()));
+  // The two paths that decide whether any of this can dispatch at all. Both
+  // default to a sibling project, so printing them is the difference between
+  // "nothing is happening" and "nothing can happen, here is why".
+  console.log(`\nguardrails  ${REPOS_YAML_PATH}${existsSync(REPOS_YAML_PATH) ? "" : "   MISSING"}`);
+  console.log(`clones      ${DEFAULT_REPOS_DIR}${existsSync(DEFAULT_REPOS_DIR) ? "" : "   MISSING"}`);
 }
 
 switch (subcommand) {

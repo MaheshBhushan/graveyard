@@ -193,25 +193,67 @@ path and exits non-zero if it's missing, rather than letting an unattended agent
 improvise its own contribution loop. Set `MK_FLEET_AGENT_CMD` to launch something
 else and the check is skipped.
 
+## Config dependency: `repos.yaml`
+
+**Required, and not in this repo.** graveyard refuses to dispatch any repo it has
+no entry for — that refusal is the outermost guardrail, and it is why a fresh
+clone blocks every job you give it:
+
+```
+warning: Textualize/rich has no entry in .../config/repos.yaml
+         it will be queued but blocked at dispatch, never run.
+```
+
+An entry supplies the base branch, the test command, the diff ceilings, and
+optionally a branch-name convention. graveyard grew out of
+[bugfix-loop](https://github.com/MaheshBhushan/bugfix-loop) and by default reads
+that project's copy from a sibling directory, rather than keeping a second set of
+ceilings that can disagree with the first. Both paths are env-overridable:
+
+| variable | default | holds |
+|---|---|---|
+| `MK_FLEET_REPOS_YAML` | `../bugfix-loop/config/repos.yaml` | the allowlist and ceilings |
+| `MK_FLEET_REPOS_DIR` | `../bugfix-loop/repos` | source clones, one per `<owner>__<name>` |
+
+`gm status` prints both, and flags either as `MISSING`. A leading `~` is
+expanded, so these work in a shell profile or a systemd unit.
+
+```yaml
+Textualize__rich:
+  url: https://github.com/Textualize/rich
+  default_branch: main                 # base ref; resolved as origin/<this>
+  test_command: .venv/bin/pytest tests/ -vv
+  bug_labels: [bug, Needs triage]      # what `gm add --from-gh` searches
+  max_files_changed: 2                 # over this after the run -> blocked
+  max_lines_changed: 50
+  max_prs_per_week: 3
+  # branch_pattern: issue-{n}          # default is fix/issue-{n}. set this for
+                                       # repos whose docs ban slashes or prefixes
+```
+
+You also need a clone of each repo at `$MK_FLEET_REPOS_DIR/<owner>__<name>`.
+graveyard only reads it and adds worktrees to it; it never fetches or commits
+there.
+
 ## Install
 
 Needs [Bun](https://bun.sh), `git`, `tmux`, an authenticated `gh`, an agent CLI on
-`PATH`, and the [`ferb` skill](#skill-dependency-ferb). No runtime dependencies
-and no install step — SQLite comes from `bun:sqlite`, and the only devDependency
-is `@types/bun`.
+`PATH`, the [`ferb` skill](#skill-dependency-ferb), and a
+[`repos.yaml`](#config-dependency-reposyaml). No runtime dependencies and no
+install step — SQLite comes from `bun:sqlite`, and the only devDependency is
+`@types/bun`.
 
 ```bash
 git clone https://github.com/MaheshBhushan/graveyard
 cd graveyard
-bun test                                 # 52 tests, no install step
+bun test                                    # no install step
 ln -s "$PWD/bin/gm" ~/.local/bin/gm         # must be on your PATH
 ln -s "$PWD/bin/gm" ~/.local/bin/graveyard  # same tool, longer name
 ```
 
 `bin/gm` resolves through the symlink, so the repo can live anywhere — including
-a path with spaces — and `gm` works from any directory. Then queue something:
-
-Three commands, in this order:
+a path with spaces — and `gm` works from any directory. Then, three commands in
+this order:
 
 ```bash
 gm add https://github.com/Textualize/rich/issues/4196   # paste a URL
@@ -219,10 +261,12 @@ gm start                                                # work the queue, live
 gm watch                                                # see what it's doing
 ```
 
-`gm start` returns immediately and leaves a supervisor running in the
-background. From then on the queue drains by itself: it holds the WIP limit,
-refills a slot as soon as a job ends, and keeps idling afterwards so a later
-`gm add` is picked up on the next tick. `gm stop` ends it.
+`gm start` returns immediately and leaves a supervisor running in its own
+session, so closing the terminal doesn't kill it. From then on the queue drains
+by itself: it holds the WIP limit and refills a slot within seconds of a job
+ending. It keeps idling afterwards, and a later `gm add` signals it to dispatch
+immediately rather than waiting out the tick. `gm stop` ends the loop and leaves
+running agents alone.
 
 > [!WARNING]
 > `start` is **live by default** — it spends tokens and opens real PRs. Use

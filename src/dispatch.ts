@@ -70,26 +70,45 @@ const FLEET_HOME = join(homedir(), ".local", "share", "mk-fleet");
 const WORKTREE_ROOT = join(FLEET_HOME, "worktrees");
 const RUNS_ROOT = join(FLEET_HOME, "runs");
 
-// Where the source clones live. bugfix-loop owns these clones; mk-fleet only
-// ever reads them and adds/removes worktrees. Overridable so tests can point
-// at a throwaway repo instead.
-const DEFAULT_REPOS_DIR = join(import.meta.dir, "..", "..", "bugfix-loop", "repos");
+// ---- where the guardrails and clones live -----------------------------------
+//
+// Neither of these is inside this repo. mk-fleet grew out of bugfix-loop (a
+// separate git repo, a sibling directory here) and still reads that project's
+// repos.yaml and source clones rather than duplicating them -- one source of
+// truth for the ceilings beats two that can disagree.
+//
+// The cost is that a clone of graveyard on its own refuses every job it is
+// given, naming a file the reader does not have. So both paths are env-
+// overridable and the defaults are just that: defaults.
+//
+//   MK_FLEET_REPOS_YAML   path to repos.yaml (the allowlist and ceilings)
+//   MK_FLEET_REPOS_DIR    directory of source clones, one per <owner>__<name>
+//
+// A leading `~` is expanded, because these are meant to be set by hand in a
+// shell profile or a systemd unit, where `~` is what people write.
+function fromEnv(name: string, fallback: string): string {
+  const v = process.env[name];
+  if (!v) return fallback;
+  return v.startsWith("~/") ? join(homedir(), v.slice(2)) : v;
+}
+
+const SIBLING_BUGFIX_LOOP = join(import.meta.dir, "..", "..", "bugfix-loop");
+
+// bugfix-loop owns these clones; mk-fleet only ever reads them and adds/removes
+// worktrees. Also overridable per-invocation with --repos-dir.
+export const DEFAULT_REPOS_DIR = fromEnv("MK_FLEET_REPOS_DIR", join(SIBLING_BUGFIX_LOOP, "repos"));
 
 const PROMPT_TEMPLATE_PATH = join(import.meta.dir, "..", "prompts", "dispatch-agent.md");
 
-// ---- guardrail data: bugfix-loop/config/repos.yaml -------------------------
+// ---- guardrail data: repos.yaml ---------------------------------------------
 //
 // Hand-rolled reader for exactly the fields mk-fleet needs. Not a general YAML
 // parser -- do not extend it into one. Returns null when the repo has no entry,
 // which is a refusal signal: a repo absent from repos.yaml is never dispatched
 // and never gets invented default ceilings.
-const REPOS_YAML_PATH = join(
-  import.meta.dir,
-  "..",
-  "..",
-  "bugfix-loop",
-  "config",
-  "repos.yaml",
+export const REPOS_YAML_PATH = fromEnv(
+  "MK_FLEET_REPOS_YAML",
+  join(SIBLING_BUGFIX_LOOP, "config", "repos.yaml"),
 );
 
 export interface RepoConfig {
