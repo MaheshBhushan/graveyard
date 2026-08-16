@@ -10,6 +10,7 @@ import {
   renderLogPane,
   renderVerdictPane,
   hints,
+  renderWatch,
   renderWatchRows,
   scrollbar,
   type WatchJob,
@@ -241,5 +242,43 @@ describe("renderVerdictPane", () => {
   test("distinguishes not-started from still-deciding", () => {
     expect(renderVerdictPane(job({ state: "queued" }), ASCII)).toContain("not started");
     expect(renderVerdictPane(job({ state: "running" }), ASCII)).toContain("phase 0");
+  });
+
+  // A refused job has no verdict and is not queued, so it used to render as
+  // "phase 0 in progress" forever -- the queue looked stuck when it was
+  // actually just holding a job it had already decided never to run.
+  test("a blocked job shows why it was refused, not fake progress", () => {
+    const out = renderVerdictPane(
+      job({
+        state: "blocked",
+        last_error: "repo anomalyco/opencode is absent from repos.yaml; refusing to dispatch",
+      }),
+      ASCII,
+    );
+    expect(out).toContain("blocked");
+    expect(out).toContain("absent from repos.yaml");
+    expect(out).not.toContain("phase 0");
+  });
+});
+
+describe("renderWatch header", () => {
+  test("counts refused jobs so the header adds up to the list below it", () => {
+    const out = renderWatch(
+      model({
+        jobs: [
+          job({ job_id: "a-1", state: "blocked", last_error: "no repos.yaml entry" }),
+          job({ job_id: "a-2", state: "running", alive: true }),
+        ],
+      }),
+      Date.parse("2026-08-16T13:21:00.000Z"),
+      ASCII,
+    );
+    expect(out).toContain("wip 1/3");
+    expect(out).toContain("stuck 1");
+  });
+
+  test("no stuck counter when nothing is stuck", () => {
+    const out = renderWatch(model(), Date.parse("2026-08-16T13:21:00.000Z"), ASCII);
+    expect(out).not.toContain("stuck");
   });
 });

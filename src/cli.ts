@@ -27,7 +27,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { readBugLabels, runDispatch } from "./dispatch.ts";
+import { readBugLabels, readRepoConfig, runDispatch } from "./dispatch.ts";
 import { addJob, clearJobs, countByState, listJobs, parseIssueRef, type JobState } from "./queue.ts";
 import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { runStart, runStop, supervise } from "./supervisor.ts";
@@ -91,6 +91,17 @@ async function fetchIssueTitle(repo: string, issue: number): Promise<string | nu
   }
 }
 
+// Dispatch refuses any repo without a repos.yaml entry, but it only finds out at
+// launch time -- so a bad `add` used to report "queued" and then sit in the
+// dashboard looking like a slow job instead of a rejected one. Say it here,
+// where the person who can fix it is still watching.
+function warnUnregistered(repo: string): void {
+  if (readRepoConfig(repo)) return;
+  console.error(`warning: ${repo} has no entry in bugfix-loop/config/repos.yaml`);
+  console.error("         it will be queued but blocked at dispatch, never run.");
+  console.error(`         add default_branch, test_command and diff ceilings for ${repo} first.`);
+}
+
 async function cmdAdd(): Promise<void> {
   const bare = positionalAfter("add");
   if (bare) {
@@ -113,6 +124,7 @@ async function cmdAdd(): Promise<void> {
     });
     const shown = title ? ` ${title}` : "";
     console.log(`${res.job_id}${shown} -> ${res.inserted ? "queued" : "already present"}`);
+    warnUnregistered(ref.repo);
     return;
   }
 
@@ -184,6 +196,7 @@ async function cmdAdd(): Promise<void> {
       if (res.inserted) inserted++;
     }
     console.log(`${inserted} newly queued, ${issues.length - inserted} already present`);
+    warnUnregistered(repo);
     return;
   }
 
@@ -209,6 +222,7 @@ async function cmdAdd(): Promise<void> {
     priority,
   });
   console.log(`${res.job_id}: ${res.inserted ? "queued" : "already present"}`);
+  warnUnregistered(repo);
 }
 
 function cmdList(): void {

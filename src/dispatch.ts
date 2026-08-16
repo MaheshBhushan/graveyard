@@ -716,7 +716,12 @@ async function launch(db: Database, plan: Plan): Promise<boolean> {
       ended_at: new Date().toISOString(),
       last_error: `git worktree add failed (exit ${add.code}): ${add.err.trim().slice(0, 300)}`,
     });
-    console.error(`  ${job.job_id}: worktree creation failed -> blocked`);
+    // Carry git's own words into the log. Stashing them only in last_error made
+    // this failure undiagnosable from the supervisor log, which is the one place
+    // an unattended run leaves a trace.
+    console.error(
+      `  ${job.job_id}: worktree creation failed -> blocked: ${add.err.trim().split("\n")[0]}`,
+    );
     return false;
   }
 

@@ -261,8 +261,23 @@ export function renderVerdictPane(job: WatchJob | undefined, theme: Theme): stri
   const inner = width - 4;
 
   if (!job.verdict) {
+    const bar = theme.unicode ? "│" : "|";
+    // A blocked or failed job never reached Phase 0, so it has no verdict --
+    // but it does have the refusal reason, and that is the one thing worth
+    // reading about it. Reporting "in progress" for a job that will never
+    // progress is how a queue looks stuck when it is actually just refused.
+    if (job.last_error) {
+      const label = job.state === "blocked" ? "blocked" : "error";
+      const body = wrap(job.last_error, Math.max(10, inner - label.length - 2));
+      return body
+        .map((seg, i) => {
+          const l = i === 0 ? pad(ink(label, "dim", theme), label.length) : pad("", label.length);
+          return ` ${ink(bar, "dim", theme)} ${l}  ${seg}`;
+        })
+        .join("\n");
+    }
     const msg = job.state === "queued" ? "not started" : "phase 0 in progress…";
-    return ink(` ${theme.unicode ? "│" : "|"} ${msg}`, "dim", theme);
+    return ink(` ${bar} ${msg}`, "dim", theme);
   }
 
   const v = job.verdict;
@@ -351,9 +366,15 @@ export function renderWatch(model: WatchModel, now: number, theme: Theme): strin
   const gos = model.jobs.filter((j) => j.verdict?.kind === "GO").length;
   const nogos = model.jobs.filter((j) => j.verdict?.kind === "NO-GO").length;
 
+  // Blocked and failed jobs were in none of the counters, so with a refused job
+  // in the queue the header added up to fewer jobs than the list below it --
+  // which reads as "the fleet is idle" rather than "something needs you".
+  const stuck = (counts.blocked ?? 0) + (counts.failed ?? 0);
   const header =
     `  wip ${running}/${model.wip}   queued ${counts.queued ?? 0}   done ${counts.done ?? 0}` +
-    `   go ${gos}   no-go ${nogos}${model.paused ? "   PAUSED" : ""}`;
+    `   go ${gos}   no-go ${nogos}` +
+    (stuck > 0 ? `   stuck ${stuck}` : "") +
+    (model.paused ? "   PAUSED" : "");
 
   const sel = model.jobs[model.selected];
   const parts = [
