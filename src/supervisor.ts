@@ -251,7 +251,12 @@ export async function runStart(opts: StartOpts): Promise<number> {
       ...(opts.live ? ["--live"] : []),
       ...(opts.repoFilter ? ["--repo", opts.repoFilter] : []),
     ],
-    { stdin: "ignore", stdout: logFd, stderr: logFd, env: process.env },
+    // detached puts the supervisor in its own session, so closing the terminal
+    // that ran `gm start` does not SIGHUP it. unref() alone only stops *this*
+    // process waiting -- the child stayed in this session and died with it,
+    // which is how an overnight fleet ended up gone by morning with no
+    // "supervisor down" line in the log to explain it.
+    { stdin: "ignore", stdout: logFd, stderr: logFd, env: process.env, detached: true },
   );
   child.unref();
 
