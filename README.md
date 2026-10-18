@@ -117,6 +117,11 @@ is the most useful thing in this repo.
 
 ## Watching it
 
+The [BPMN 2.0 process model](docs/issue-to-pr.md) documents the issue-to-PR
+workflow and annotates it with measurements from the SQLite job log.
+Regenerate its viewable XML with `bun run process-model --db <fleet.sqlite>`.
+The exporter reads the database without changing it and writes XML to stdout.
+
 ```
 $ gm watch
 ```

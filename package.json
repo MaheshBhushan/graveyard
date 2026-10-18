@@ -7,6 +7,7 @@
     "backfill": "bun run src/backfill.ts",
     "cli": "bun run src/cli.ts",
     "dispatch": "bun run src/dispatch.ts",
+    "process-model": "bun run src/process-model.ts",
     "test": "bun test"
   },
   "dependencies": {},
