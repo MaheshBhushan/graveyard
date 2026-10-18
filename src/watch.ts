@@ -27,6 +27,7 @@ import {
   truncate,
 } from "./render.ts";
 import type { Theme } from "./theme.ts";
+import { repoAcceptance, syncOutcomes, type RepoAcceptance } from "./outcomes.ts";
 
 // ---- phase 0 verdicts -------------------------------------------------------
 
@@ -119,6 +120,9 @@ export interface WatchModel {
    *  never dispatches, so without one a queue sits at `wip 0/n` forever --
    *  which looks exactly like an idle fleet with nothing to do. */
   supervised?: boolean;
+  acceptance?: readonly RepoAcceptance[];
+  acceptanceViewport?: number;
+  outcomeError?: string;
 }
 
 // ---- scrolling --------------------------------------------------------------
@@ -365,6 +369,29 @@ export function hints(theme: Theme): string {
   return ` ${parts.join("   ")}`;
 }
 
+export function renderAcceptance(
+  rows: readonly RepoAcceptance[], now: number, theme: Theme, selectedRepo?: string, viewport = 4,
+): string {
+  if (!rows.length) return ink(truncate(" PR acceptance: no tracked PRs", theme.width, theme), "dim", theme);
+  // Keep the selected job's repo visible when many repositories share a queue.
+  const ordered = [...rows].sort((a, b) =>
+    Number(b.repo === selectedRepo?.toLowerCase()) - Number(a.repo === selectedRepo?.toLowerCase()));
+  const lines = [truncate(" PR acceptance: merged / resolved (open excluded)", theme.width, theme)];
+  for (const row of ordered.slice(0, Math.max(1, viewport))) {
+    const resolved = row.merged + row.closed;
+    const rate = resolved ? `${(100 * row.merged / resolved).toFixed(1)}%` : "n/a";
+    const status = row.errors ? " SYNC ERROR" :
+      row.last_synced_at && now - Date.parse(row.last_synced_at) > 300_000 ? " STALE" : "";
+    const metrics = `${rate} (${row.merged}/${resolved}) open ${row.open}` +
+      (row.unknown ? ` unknown ${row.unknown}` : "") + status;
+    const repo = truncate(row.repo, Math.max(3, theme.width - cells(metrics) - 2), theme);
+    const line = ` ${repo} ${metrics}`;
+    lines.push(truncate(line, theme.width, theme));
+  }
+  if (ordered.length > viewport) lines.push(truncate(` +${ordered.length - viewport} repos: gm outcomes`, theme.width, theme));
+  return lines.map((line) => ink(line, "dim", theme)).join("\n");
+}
+
 export function renderWatch(model: WatchModel, now: number, theme: Theme): string {
   const counts: Record<string, number> = {};
   for (const j of model.jobs) counts[j.state] = (counts[j.state] ?? 0) + 1;
@@ -392,6 +419,8 @@ export function renderWatch(model: WatchModel, now: number, theme: Theme): strin
   const sel = model.jobs[model.selected];
   const parts = [
     renderFleetBox(header, theme, "graveyard"),
+    renderAcceptance(model.acceptance ?? [], now, theme, model.jobs[model.selected]?.repo, model.acceptanceViewport),
+    model.outcomeError ? ink(truncate(` Outcome sync: ${model.outcomeError}`, theme.width, theme), "warn", theme) : "",
     "",
     renderWatchRows(model, now, theme),
     "",
@@ -464,6 +493,9 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
   let stop = false;
   let rowOffset = 0;
   let logOffset: number | null = null; // null = stuck to the bottom
+  const outcomeAbort = new AbortController();
+  let outcomeSync: Promise<void> | null = null;
+  let outcomeError: string | undefined;
 
   const out = process.stdout;
   const raw = process.stdin.isTTY === true;
@@ -546,6 +578,14 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
         // A reconcile failure is not worth tearing the view down for; the
         // next tick tries again and the rows are still readable meanwhile.
       }
+      // Fetch in the background so GitHub latency cannot freeze scrolling or q.
+      // SQLite's last_checked_at limits requests to once per minute per PR.
+      if (!paused && !outcomeSync) {
+        outcomeSync = syncOutcomes(db, { signal: outcomeAbort.signal })
+          .then((result) => { outcomeError = result.errors[0]; dirty = true; })
+          .catch((error) => { outcomeError = String(error); dirty = true; })
+          .finally(() => { outcomeSync = null; });
+      }
 
       const rows = query.all() as (JobRow & { tmux_session: string | null })[];
       jobCount = rows.length;
@@ -568,11 +608,14 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
       // corrupting the layout until restart.
       const theme = { ...opts.theme, width: out.columns ?? opts.theme.width };
       const height = out.rows ?? opts.height;
+      const acceptance = repoAcceptance(db);
+      const acceptanceViewport = Math.max(1, Math.min(4, Math.floor(height / 8)));
+      const acceptanceH = renderAcceptance(acceptance, Date.now(), theme, sel?.repo, acceptanceViewport).split("\n").length;
 
       // Split the leftover height between the two scrollable panes. The verdict
       // pane is measured rather than guessed because it wraps to the width.
       const verdictH = sel ? renderVerdictPane(sel, theme).split("\n").length : 0;
-      const chrome = 3 /* box */ + 2 /* blanks */ + verdictH + 1 /* blank */ + 1 /* log head */ + 2;
+      const chrome = 3 /* box */ + acceptanceH + (outcomeError ? 1 : 0) + 2 /* blanks */ + verdictH + 1 /* blank */ + 1 /* log head */ + 2;
       const free = Math.max(6, height - chrome);
       // -1 leaves room for the "… N more" line the row pane may append.
       rowViewport = Math.max(3, Math.min(jobs.length || 1, Math.floor(free * 0.55) - 1));
@@ -593,6 +636,9 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
         wip: opts.wip,
         paused,
         supervised: activeSupervisor() != null,
+        acceptance,
+        acceptanceViewport,
+        outcomeError,
       };
 
       const screen = renderWatch(model, Date.now(), theme);
@@ -612,7 +658,9 @@ export async function runWatch(db: Database, opts: WatchOptions): Promise<void> 
       }
     }
   } finally {
+    outcomeAbort.abort();
     if (raw) process.stdin.off("data", onKey);
     restore();
+    await outcomeSync;
   }
 }

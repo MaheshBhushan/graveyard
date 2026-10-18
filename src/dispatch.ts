@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { listJobs, transitionJob, type Job, type JobState } from "./queue.ts";
 import { renderDashboard } from "./render.ts";
 import { resolveTheme } from "./theme.ts";
+import { capturePullRequests } from "./outcomes.ts";
 import {
   AGENT_EFFORT,
   AGENT_MODEL,
@@ -860,6 +861,7 @@ export interface DispatchResult {
 export async function reconcileOnly(db: Database, reposDir = DEFAULT_REPOS_DIR): Promise<void> {
   migrateJobs(db);
   await reconcile(db, reposDir, false, () => {});
+  capturePullRequests(db);
 }
 
 // One pass: reconcile what finished, resume what can be resumed, fill the free
@@ -876,6 +878,7 @@ export async function dispatchOnce(db: Database, opts: DispatchOpts): Promise<Di
 
   say("reconcile:");
   const aliveRunning = await reconcile(db, reposDir, dryRun, say);
+  if (!dryRun) capturePullRequests(db);
 
   say("resume:");
   const resumeBudget = Math.max(wip - aliveRunning, 0);

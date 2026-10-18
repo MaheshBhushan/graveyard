@@ -262,6 +262,15 @@ describe("renderVerdictPane", () => {
 });
 
 describe("renderWatch header", () => {
+  test("includes repository acceptance and sync failures in the live screen", () => {
+    const out = renderWatch(model({
+      acceptance: [{ repo: "textualize/rich", merged: 1, closed: 1, open: 2, unknown: 0, errors: 1, last_synced_at: null }],
+      outcomeError: "GitHub unavailable",
+    }), Date.parse("2026-10-18T12:00:00Z"), ASCII);
+    expect(out).toContain("textualize/rich 50.0% (1/2) open 2 SYNC ERROR");
+    expect(out).toContain("Outcome sync: GitHub unavailable");
+  });
+
   test("counts refused jobs so the header adds up to the list below it", () => {
     const out = renderWatch(
       model({
