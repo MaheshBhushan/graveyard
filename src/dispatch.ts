@@ -20,6 +20,7 @@ import { listJobs, transitionJob, type Job, type JobState } from "./queue.ts";
 import { renderDashboard } from "./render.ts";
 import { resolveTheme } from "./theme.ts";
 import { capturePullRequests } from "./outcomes.ts";
+import { contractCompletionError, contractPrompt } from "./contracts.ts";
 import {
   AGENT_EFFORT,
   AGENT_MODEL,
@@ -472,7 +473,9 @@ async function reconcile(
           `diff ceiling breached: ${stat.files} files / ${stat.lines} lines ` +
           `(max ${cfg.max_files_changed} files / ${cfg.max_lines_changed} lines)`;
       } else {
-        nextState = "done";
+        const contractError = await contractCompletionError(db, job.job_id, wt);
+        nextState = contractError ? "blocked" : "done";
+        reason = contractError;
       }
     } else {
       const logPath = join(runDir(job.job_id), "agent.log");
@@ -770,7 +773,7 @@ async function launch(db: Database, plan: Plan): Promise<boolean> {
     symlinkSync(srcVenv, wtVenv);
   }
 
-  writeFileSync(plan.promptPath, renderPrompt(plan));
+  writeFileSync(plan.promptPath, renderPrompt(plan) + contractPrompt(db, job.job_id, plan.worktree));
 
   const started = await run([
     "tmux",

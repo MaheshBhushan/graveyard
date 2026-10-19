@@ -50,6 +50,7 @@ import { nudge, runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
 import { capturePullRequests, repoAcceptance, syncOutcomes } from "./outcomes.ts";
+import { contractHistory, getContract, parseContract, setContract, verifyContract } from "./contracts.ts";
 
 // Matches backfill.ts's hand-rolled flag parsing style.
 // Whichever name the launcher was invoked under, so `graveyard` does not
@@ -65,7 +66,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "outcomes", "__supervise"].includes(a),
+  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "outcomes", "contract", "verify", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -149,6 +150,11 @@ function nudgeAfterAdd(inserted: number): void {
 }
 
 async function cmdAdd(): Promise<void> {
+  const contractFile = argVal("--contract");
+  const contract = contractFile ? parseContract(JSON.parse(readFileSync(contractFile, "utf8"))) : undefined;
+  if (process.argv.includes("--contract") && (!contractFile || argVal("--from-gh"))) {
+    throw new Error("--contract needs a JSON file and a single issue");
+  }
   const bare = positionalAfter("add");
   if (bare) {
     const ref = parseIssueRef(bare);
@@ -167,6 +173,7 @@ async function cmdAdd(): Promise<void> {
       task_source: "url",
       url: ref.url,
       priority: priorityStr ? Number(priorityStr) : 0,
+      contract,
     });
     const shown = title ? ` ${title}` : "";
     console.log(`${res.job_id}${shown} -> ${res.inserted ? "queued" : "already present"}`);
@@ -268,6 +275,7 @@ async function cmdAdd(): Promise<void> {
     title,
     task_source: "manual",
     priority,
+    contract,
   });
   console.log(`${res.job_id}: ${res.inserted ? "queued" : "already present"}`);
   warnUnregistered(repo);
@@ -394,8 +402,39 @@ function cmdStatus(): void {
 }
 
 switch (subcommand) {
+  case "contract":
+  case "verify": {
+    try {
+      const jobId = positionalAfter(subcommand);
+      if (!jobId) throw new Error(`usage: ${SELF} ${subcommand} <job-id> [flags]`);
+      if (subcommand === "contract") {
+        const file = argVal("--file");
+        if (process.argv.includes("--file") && !file) throw new Error("--file needs a JSON path");
+        if (file) setContract(db, jobId, JSON.parse(readFileSync(file, "utf8")));
+        const contract = getContract(db, jobId);
+        if (!contract) throw new Error(`no contract for ${jobId}`);
+        console.log(JSON.stringify({ contract, iterations: contractHistory(db, jobId) }, null, 2));
+      } else {
+        const effort = argVal("--effort-ms");
+        const stopReason = argVal("--stop-reason");
+        if (process.argv.includes("--effort-ms") && !effort) throw new Error("--effort-ms needs a number");
+        if (process.argv.includes("--stop-reason") && !stopReason) throw new Error("--stop-reason needs text");
+        const result = await verifyContract(db, jobId, argVal("--cwd") ?? process.cwd(), {
+          reportedEffortMs: effort === null ? undefined : Number(effort),
+          stopReason: stopReason ?? undefined,
+          progress: (message) => console.error(message),
+        });
+        console.log(JSON.stringify(result, null, 2));
+        if (result.decision !== "complete") process.exitCode = 1;
+      }
+    } catch (error) {
+      console.error(String(error));
+      process.exitCode = 1;
+    }
+    break;
+  }
   case "add":
-    await cmdAdd();
+    try { await cmdAdd(); } catch (error) { console.error(String(error)); process.exitCode = 1; }
     break;
   case "list":
     cmdList();
@@ -469,9 +508,12 @@ switch (subcommand) {
     console.error(`usage: ${SELF} <add|start|watch|stop|list|status|clear|dispatch> [flags]`);
     console.error("");
     console.error(`  add <issue-url | owner/name#n>   queue an issue`);
+    console.error("      [--contract <json>]           attach acceptance criteria atomically with enqueue");
     console.error(`  start [--wip <n>] [--tick <s>]   run the fleet until stopped -- SPENDS TOKENS`);
     console.error("  watch [--interval <seconds>]     dashboard: phase 0 verdicts + logs");
     console.error("  outcomes [--sync]                per-repo PR outcomes as JSON; optionally refresh GitHub");
+    console.error("  contract <job-id> [--file <json>] attach an immutable task contract or read its history");
+    console.error("  verify <job-id> [--cwd <path>]    run contract checks; --effort-ms <n>, --stop-reason <text>");
     console.error("  stop                             stop the fleet (running agents finish)");
     console.error("  list [--state <s>] [--json]      the queue");
     console.error("  status                           counts by state");
