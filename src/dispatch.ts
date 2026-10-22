@@ -25,8 +25,12 @@ import {
   classifyStall,
   currentAttemptLog,
   RESUME_CAP,
+  agentEnvPrefix,
+  agentPermissionArgs,
   resumeAgentCommand,
   resumeMarker,
+  shq,
+  type AgentScope,
   type StallVerdict,
 } from "./recover.ts";
 
@@ -334,16 +338,14 @@ async function removeWorktree(srcRepo: string, wt: string): Promise<void> {
 
 // ---- the agent command line ------------------------------------------------
 //
-// Permissions are bypassed on purpose: this runs unattended, so there is no
-// human to approve tool calls.
-//
-// The blast radius used to be closed on both sides: a throwaway worktree plus a
-// hard no-push/no-PR rule, so the worst case stayed on this disk. That second
-// half is gone -- the prompt now delegates to the `ferb` skill, which pushes to
-// a fork, opens the PR, and comments on the issue as its final phase. So a
-// dispatched agent CAN act publicly, with no human between it and the repo, and
-// the only remaining brakes are ferb's own Phase 0 go/no-go gate and its rules.
-// Worth being blunt about in the place where the permission bypass is chosen.
+// This runs unattended on GitHub issue text, which is attacker-controlled. The
+// agent no longer bypasses permissions: recover.ts's agentPermissionArgs()
+// gives it acceptEdits inside the worktree plus an explicit tool allowlist
+// (local git, read-only gh, the configured test command, and exactly one push
+// target, PR target and issue to comment on), denies everything else with no
+// one to ask, and agentEnvPrefix() strips the environment down to what claude,
+// git and gh need. ferb's final phase still pushes to a fork, opens the PR and
+// comments on the issue, but only for this job's branch, repo and issue.
 //
 // Invoking a real agent requires an explicit opt-in: either --live, or
 // MK_FLEET_AGENT_CMD naming the command to run instead. Without one of those,
@@ -351,18 +353,17 @@ async function removeWorktree(srcRepo: string, wt: string): Promise<void> {
 //
 // The default used to be the other way round -- real agent unless
 // MK_FLEET_AGENT_CMD was set -- and during T4's own testing that fired twice by
-// omission on a manual retry, launching a real permission-bypassed agent that
-// nobody intended. A safety property that depends on remembering an env var is
-// not a safety property; forgetting a flag now costs an inert run, not a live
-// one.
-export function agentCommand(promptPath: string, logPath: string, live: boolean): string {
+// omission on a manual retry, launching a real agent that nobody intended. A
+// safety property that depends on remembering an env var is not a safety
+// property; forgetting a flag now costs an inert run, not a live one.
+export function agentCommand(promptPath: string, logPath: string, live: boolean, scope: AgentScope): string {
   const override = process.env.MK_FLEET_AGENT_CMD;
   const cmd = override
     ? override
     : live
-      ? `claude --dangerously-skip-permissions --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "$(cat ${promptPath})"`
+      ? `${agentEnvPrefix()} claude ${agentPermissionArgs(scope)} --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "$(cat ${shq(promptPath)})"`
       : `echo "mk-fleet: inert run -- pass --live (or set MK_FLEET_AGENT_CMD) to invoke a real agent"`;
-  return `${cmd} >> ${logPath} 2>&1`;
+  return `${cmd} >> ${shq(logPath)} 2>&1`;
 }
 
 // The dispatch prompt delegates the whole contribution loop to the `ferb` skill,
@@ -637,7 +638,13 @@ async function resumeStalled(db: Database, reposDir: string, dryRun: boolean, bu
     // across resumes, so mark the boundary before this attempt's output lands.
     writeFileSync(logPath, resumeMarker(), { flag: "a" });
     const tmux = job.tmux_session ?? tmuxName(job.job_id);
-    const shellCmd = resumeAgentCommand(logPath, live);
+    const shellCmd = resumeAgentCommand(logPath, live, {
+      repo: job.repo,
+      branch: job.branch,
+      issue: job.issue_number ?? null,
+      runDir: rd,
+      testCommand: readRepoConfig(job.repo)?.test_command ?? null,
+    });
 
     const started = await run(["tmux", "new-session", "-d", "-s", tmux, "-c", job.worktree_path, shellCmd]);
     if (started.code !== 0) {
@@ -728,7 +735,13 @@ async function buildPlan(job: DispatchJob, reposDir: string, live: boolean): Pro
     tmux: tmuxName(job.job_id),
     shellCmd: "",
   };
-  plan.shellCmd = agentCommand(promptPath, logPath, live);
+  plan.shellCmd = agentCommand(promptPath, logPath, live, {
+    repo: job.repo,
+    branch: plan.branch,
+    issue: job.issue_number ?? null,
+    runDir: rd,
+    testCommand: cfg.test_command,
+  });
   return plan;
 }
 
