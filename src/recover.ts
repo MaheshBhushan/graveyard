@@ -8,9 +8,89 @@
 // lookups, and the live `usage` API poll -- mk-fleet has no OAuth token
 // plumbing and works from the job's own agent.log instead of a live quota
 // endpoint. This file has no code path that pushes, opens a PR, or comments
-// upstream -- same hard rule as dispatch.ts.
+// upstream itself; agentPermissionArgs() below bounds what the agent may do.
 
 import { classifyQuotaKind, extractResetHint, OVERLOAD_PAT, QUOTA_PAT, resolveResetTime } from "./telemetry.ts";
+
+// POSIX single-quote a path for the tmux shell command line.
+export function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// ---- agent permission policy ----------------------------------------------
+//
+// A dispatched agent reads GitHub issue text, which anyone can write, so the
+// issue is untrusted input steering an unattended agent. The agent therefore
+// runs WITHOUT --dangerously-skip-permissions: acceptEdits auto-approves file
+// edits inside the worktree (and the run dir, via --add-dir), every tool or
+// command not on the allowlist below is denied with nobody to ask
+// (--permission-prompts none), and the only network-visible writes it can make
+// are pushing its own branch to `fork`, opening a PR against the job's repo,
+// and commenting on the job's issue.
+//
+// Residual risk, stated plainly: the configured test command runs worktree
+// code, which the agent can edit, so a determined injection can still execute
+// code through the test suite. agentEnvPrefix() keeps tokens other than the
+// ones the run needs out of that process's environment.
+
+export interface AgentScope {
+  repo: string;
+  branch: string;
+  issue: number | null;
+  runDir: string;
+  testCommand: string | null;
+}
+
+// Environment variables the agent process receives; everything else is dropped
+// by `env -i`. Unset ones expand to nothing.
+export const AGENT_ENV_PASSTHROUGH = [
+  "HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR",
+  "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR",
+  "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
+] as const;
+
+export function agentEnvPrefix(): string {
+  return ["env", "-i", ...AGENT_ENV_PASSTHROUGH.map((v) => "${" + v + ':+' + v + '="$' + v + '"}')].join(" ");
+}
+
+export function agentAllowedTools(s: AgentScope): string[] {
+  const allow = [
+    "Read", "Glob", "Grep", "Edit", "MultiEdit", "Write", "NotebookEdit", "TodoWrite", "Skill", "Task", "Agent",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git add:*)",
+    "Bash(git commit:*)", "Bash(git rev-parse:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
+    "Bash(git blame:*)", "Bash(git stash:*)", "Bash(git restore:*)", "Bash(git fetch origin:*)",
+    "Bash(git branch --show-current)", "Bash(git remote -v)",
+    "Bash(git remote add fork https://github.com/:*)",
+    `Bash(git push -u fork ${s.branch})`,
+    `Bash(git push fork ${s.branch})`,
+    "Bash(gh auth status)", "Bash(gh api user --jq .login)",
+    "Bash(gh issue view:*)", "Bash(gh pr list:*)", "Bash(gh pr view:*)", "Bash(gh search:*)",
+    `Bash(gh repo fork ${s.repo} --clone=false --remote=false)`,
+    `Bash(gh pr create --repo ${s.repo} --head:*)`,
+  ];
+  if (s.issue != null) allow.push(`Bash(gh issue comment ${s.issue} --repo ${s.repo}:*)`);
+  if (s.testCommand) allow.push(`Bash(${s.testCommand}:*)`);
+  return allow;
+}
+
+export const AGENT_DISALLOWED_TOOLS = [
+  "WebFetch", "WebSearch",
+  "Bash(git push origin:*)", "Bash(git push --force:*)", "Bash(git push -f:*)",
+  // gh honours the LAST --repo, so a second one would retarget an allowed prefix.
+  "Bash(gh * --repo * --repo *)", "Bash(gh * -R *)", "Bash(gh * --repo=*)",
+  "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)", "Read(~/.config/gh/**)",
+  "Read(~/.claude/.credentials.json)", "Read(~/.netrc)", "Read(~/.git-credentials)",
+];
+
+export function agentPermissionArgs(s: AgentScope): string {
+  return [
+    "--permission-mode acceptEdits",
+    "--permission-prompts none",
+    `--add-dir ${shq(s.runDir)}`,
+    `--allowedTools ${agentAllowedTools(s).map(shq).join(" ")}`,
+    `--disallowedTools ${AGENT_DISALLOWED_TOOLS.map(shq).join(" ")}`,
+  ].join(" ");
+}
 
 // A job that keeps stalling stops being resumed here and is failed instead,
 // so a permanently-stuck rate limit (or a flaky non-quota error that never
@@ -128,8 +208,8 @@ export function classifyStall(logText: string, prDraftExists: boolean, now: Date
 // job's existing worktree, per cc-continue's approach, instead of a fresh
 // `-p <prompt>` on a fresh worktree/branch. Same MK_FLEET_AGENT_CMD override
 // dispatch.ts's agentCommand() uses, so tests never invoke a real model here
-// either. Same permission posture (--dangerously-skip-permissions) and same
-// absence of any push/PR/comment invocation as a fresh launch.
+// either. Same permission posture (agentPermissionArgs + agentEnvPrefix) as a
+// fresh launch.
 // agent.log is appended across resume attempts (each resume reuses the same
 // logPath, for a human reading the whole run's history in the morning). That
 // means a stall message from an EARLIER attempt can still sit inside the
@@ -149,12 +229,12 @@ export function currentAttemptLog(logText: string): string {
   return idx === -1 ? logText : logText.slice(idx);
 }
 
-export function resumeAgentCommand(logPath: string, live: boolean): string {
+export function resumeAgentCommand(logPath: string, live: boolean, scope: AgentScope): string {
   const override = process.env.MK_FLEET_AGENT_CMD;
   const cmd = override
     ? override
     : live
-      ? `claude --continue --dangerously-skip-permissions --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "${RESUME_PROMPT}"`
+      ? `${agentEnvPrefix()} claude --continue ${agentPermissionArgs(scope)} --model ${AGENT_MODEL} --effort ${AGENT_EFFORT} -p "${RESUME_PROMPT}"`
       : `echo "mk-fleet: inert resume -- pass --live (or set MK_FLEET_AGENT_CMD) to invoke a real agent"`;
-  return `${cmd} >> ${logPath} 2>&1`;
+  return `${cmd} >> ${shq(logPath)} 2>&1`;
 }
