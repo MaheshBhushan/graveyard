@@ -66,7 +66,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "outcomes", "contract", "verify", "__supervise"].includes(a),
+  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "outcomes", "contract", "verify", "review", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -493,6 +493,12 @@ switch (subcommand) {
     console.log(JSON.stringify(repoAcceptance(db), null, 2));
     break;
   }
+  case "review": {
+    const { serveReview } = await import("./review-server.ts");
+    const server = serveReview(dbPath, Number(argVal("--port") ?? 4173));
+    console.log(`task review: ${server.url}`);
+    break;
+  }
   case "watch": {
     const intervalArg = argVal("--interval");
     const wipArg = argVal("--wip");
@@ -514,6 +520,7 @@ switch (subcommand) {
     console.error("  outcomes [--sync]                per-repo PR outcomes as JSON; optionally refresh GitHub");
     console.error("  contract <job-id> [--file <json>] attach an immutable task contract or read its history");
     console.error("  verify <job-id> [--cwd <path>]    run contract checks; --effort-ms <n>, --stop-reason <text>");
+    console.error("  review [--port <n>]              read-only task review frontend and /api/tasks");
     console.error("  stop                             stop the fleet (running agents finish)");
     console.error("  list [--state <s>] [--json]      the queue");
     console.error("  status                           counts by state");

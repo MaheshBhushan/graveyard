@@ -408,3 +408,7 @@ The CLI and internals still carry the project's working name, `mk-fleet`.
 
 MIT. Issues and questions:
 [github.com/MaheshBhushan/graveyard/issues](https://github.com/MaheshBhushan/graveyard/issues).
+
+## Task review frontend
+
+`gm review [--port 4173]` serves a read-only React page on 127.0.0.1 with job state, contract regression-test results and maintainer review notes. The same data is available as JSON from `GET /api/tasks` and `GET /api/tasks/<job-id>`. The server opens the database read-only and rejects non-GET requests with 405.
