@@ -49,6 +49,7 @@ import { renderDashboard, renderJobRows, renderStatus } from "./render.ts";
 import { nudge, runStart, runStop, supervise } from "./supervisor.ts";
 import { runWatch } from "./watch.ts";
 import { resolveTheme } from "./theme.ts";
+import { capturePullRequests, repoAcceptance, syncOutcomes } from "./outcomes.ts";
 
 // Matches backfill.ts's hand-rolled flag parsing style.
 // Whichever name the launcher was invoked under, so `graveyard` does not
@@ -64,7 +65,7 @@ const dbPath = argVal("--db") ?? join(homedir(), ".local", "share", "mk-fleet", 
 // --db may appear before or after the subcommand, so pick the subcommand out
 // of argv rather than assuming a fixed position.
 const subcommand = process.argv.slice(2).find((a) =>
-  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "__supervise"].includes(a),
+  ["add", "list", "status", "clear", "requeue", "start", "stop", "dispatch", "watch", "outcomes", "__supervise"].includes(a),
 );
 
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -74,6 +75,10 @@ db.exec("PRAGMA journal_mode = WAL;");
 
 const schemaPath = join(import.meta.dir, "..", "schema.sql");
 db.exec(readFileSync(schemaPath, "utf8"));
+// Preserve PR identities before clear/requeue can remove run bookkeeping.
+if (["clear", "requeue", "outcomes"].includes(subcommand ?? "") && !process.argv.includes("--dry-run")) {
+  capturePullRequests(db);
+}
 
 // ---- subcommands -------------------------------------------------------------
 
@@ -440,6 +445,15 @@ switch (subcommand) {
   case "dispatch":
     await runDispatch(db);
     break;
+  case "outcomes": {
+    if (process.argv.includes("--sync")) {
+      const result = await syncOutcomes(db, { force: true });
+      for (const error of result.errors) console.error(error);
+      if (result.errors.length) process.exitCode = 1;
+    }
+    console.log(JSON.stringify(repoAcceptance(db), null, 2));
+    break;
+  }
   case "watch": {
     const intervalArg = argVal("--interval");
     const wipArg = argVal("--wip");
@@ -457,6 +471,7 @@ switch (subcommand) {
     console.error(`  add <issue-url | owner/name#n>   queue an issue`);
     console.error(`  start [--wip <n>] [--tick <s>]   run the fleet until stopped -- SPENDS TOKENS`);
     console.error("  watch [--interval <seconds>]     dashboard: phase 0 verdicts + logs");
+    console.error("  outcomes [--sync]                per-repo PR outcomes as JSON; optionally refresh GitHub");
     console.error("  stop                             stop the fleet (running agents finish)");
     console.error("  list [--state <s>] [--json]      the queue");
     console.error("  status                           counts by state");

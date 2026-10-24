@@ -86,3 +86,37 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
+
+-- Independent of jobs: clearing/requeueing the work queue must retain outcomes.
+CREATE TABLE IF NOT EXISTS pull_requests (
+  repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  job_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  branch TEXT,
+  author TEXT,
+  state TEXT CHECK (state IN ('open', 'merged', 'closed')),
+  created_at TEXT,
+  merged_at TEXT,
+  closed_at TEXT,
+  last_checked_at TEXT,
+  last_synced_at TEXT,
+  sync_error TEXT,
+  PRIMARY KEY (repo, pr_number)
+);
+
+CREATE TABLE IF NOT EXISTS pr_decisions (
+  repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('event', 'review', 'review_comment')),
+  source_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  actor TEXT,
+  author_association TEXT,
+  body TEXT,
+  url TEXT,
+  occurred_at TEXT NOT NULL,
+  updated_at TEXT,
+  PRIMARY KEY (repo, pr_number, source, source_id),
+  FOREIGN KEY (repo, pr_number) REFERENCES pull_requests(repo, pr_number)
+);

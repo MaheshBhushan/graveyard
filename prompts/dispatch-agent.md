@@ -113,6 +113,14 @@ it is not optional and it is not the same as the run record below.
 
 ## Addendum 6: finish by writing the run record
 
+Immediately after each PR opens, append a `PR_URL: <the PR URL>` line to:
+
+{{PR_DRAFT_PATH}}.urls
+
+Keep earlier lines from previous attempts. This lets the outcome tracker follow
+PRs even if the agent exits before its final report. This separate file does
+not signal job completion.
+
 When you are done — whichever way it ended — write your report to this exact
 path, last:
 
@@ -123,6 +131,8 @@ job is classified as died and may be resumed. Include:
 
 - the outcome: PR opened / NO-GO / could-not-reproduce / stopped-and-why
 - the PR URL and branch, if you opened one
+- a separate `PR_URL: https://github.com/<owner>/<repo>/pull/<number>` line for
+  each PR you opened; write `PR_URL: none` when you did not open a PR
 - what was wrong, the root cause, and what you changed
 - test evidence: the commands you ran and their results
 - anything you flagged but did not fix, and anything a human should check

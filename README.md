@@ -135,6 +135,38 @@ back to parsing the run record for jobs that predate it.
 record. Elapsed time is measured from launch to when `reconcile` *observed* the
 job finish, so with the supervisor running it can overstate by up to one tick.
 
+`watch` also shows **PR acceptance per repository**. Acceptance is merged PRs
+divided by resolved PRs (merged plus closed without merging). Open PRs and PRs
+awaiting their first successful sync are listed separately and excluded from
+the denominator. A repository with no resolved PRs shows `n/a`.
+
+The live supervisor and `watch` refresh tracked PRs through authenticated `gh`
+GET requests at most once per minute per PR. `watch` fetches in the background
+so GitHub latency does not block navigation. Failed refreshes retain the last
+successful snapshot and show `SYNC ERROR`; snapshots older than five minutes
+show `STALE`. Use `gm outcomes` for all repository counts as JSON, or
+`gm outcomes --sync` to force a refresh. A failed forced refresh exits nonzero.
+
+Run records identify submissions with a `PR_URL: https://github.com/owner/repo/pull/123`
+line for each opened PR. Agents also append that line to `pr-draft.md.urls`
+immediately after opening each PR, before writing their final report. This
+keeps submissions discoverable if an agent exits before completing its report.
+Older records with `PR URL:` fields or an explicit
+`Outcome: PR opened` declaration are also read. GitHub must confirm the target
+repository and the recorded branch before a PR contributes to the counts.
+The tracker stores merge, close and reopen events with their actors. Close
+events can include an author's withdrawal. It also stores submitted reviews
+and inline review comments from `OWNER`, `MEMBER` and `COLLABORATOR` accounts;
+it excludes the PR author and bots from those review decisions. GitHub review
+states include approvals, requested changes, comments and dismissals. Review
+edits update the existing SQLite record without adding duplicate decisions.
+The endpoints follow the [GitHub REST API](https://docs.github.com/en/rest/pulls/pulls)
+and paginate all events, reviews and inline comments.
+
+SQLite retains PR identities and decisions when jobs are cleared or requeued.
+The tracker captures run records before those commands remove queue bookkeeping.
+Cleared PRs continue to sync, including closed PRs that might be reopened.
+
 **Scrolling.** The view runs on the alternate screen, so the terminal's own
 scrollback is gone while it's open. The job list is a window you move with the
 arrow keys — it follows the selection and says how many rows are below the fold.
@@ -355,6 +387,7 @@ src/recover.ts         stall classification and resume decisions
 src/render.ts          terminal rendering (pure, snapshot-tested)
 src/supervisor.ts      the `start` loop: tick, refill, pidfile, stop
 src/watch.ts           live TUI: phase 0 verdicts + log pane
+src/outcomes.ts        GitHub PR lifecycle/review sync and per-repo outcome counts
 test/                  52 tests over the renderers, parsers, refs and the queue
 analysis/              the go/no-go gate, and the two live runs
 ```

@@ -10,6 +10,7 @@
 // immediately and `gm watch` is what you look at afterwards.
 
 import { Database } from "bun:sqlite";
+import { syncOutcomes } from "./outcomes.ts";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -109,8 +110,10 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
   db.exec(readFileSync(join(import.meta.dir, "..", "schema.sql"), "utf8"));
 
   let stop = false;
+  const outcomeAbort = new AbortController();
   const bye = () => {
     stop = true;
+    outcomeAbort.abort();
   };
   process.on("SIGTERM", bye);
   process.on("SIGINT", bye);
@@ -152,6 +155,10 @@ export async function supervise(opts: SuperviseOpts): Promise<void> {
         repoFilter: opts.repoFilter ?? null,
         say: (s) => buffered.push(s),
       });
+      if (opts.live) {
+        const outcomes = await syncOutcomes(db, { signal: outcomeAbort.signal });
+        for (const error of outcomes.errors) say(`outcome sync: ${error}`);
+      }
 
       // Something is queued behind a full WIP: the next free slot should go to
       // it in seconds, not at the end of a 30s tick.
