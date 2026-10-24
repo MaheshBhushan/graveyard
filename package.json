@@ -8,10 +8,16 @@
     "cli": "bun run src/cli.ts",
     "dispatch": "bun run src/dispatch.ts",
     "process-model": "bun run src/process-model.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "review": "bun run src/cli.ts review"
   },
-  "dependencies": {},
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
   }
 }
