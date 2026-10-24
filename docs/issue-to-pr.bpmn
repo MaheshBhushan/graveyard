@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="GraveyardDefinitions" targetNamespace="https://github.com/MaheshBhushan/graveyard/process">
+<bpmn:process id="IssueToPR" name="graveyard: issue to pull request" isExecutable="false">
+<bpmn:documentation>Source: fleet.sqlite; exported: 2026-10-18T21:05:22.963Z; jobs=4; first-launch/no-resume rows=4. Units: milliseconds. p95: nearest rank. Missing/invalid/reversed timestamps excluded. Phase waits are unavailable, never assumed zero. This descriptive model does not execute jobs.</bpmn:documentation>
+<bpmn:startEvent id="Issue" name="Issue selected"><bpmn:outgoing>Flow_Issue_Enqueue</bpmn:outgoing></bpmn:startEvent>
+<bpmn:task id="Enqueue" name="Enqueue issue (gm add)"><bpmn:incoming>Flow_Issue_Enqueue</bpmn:incoming><bpmn:outgoing>Flow_Enqueue_Queue</bpmn:outgoing></bpmn:task>
+<bpmn:task id="Queue" name="Wait for WIP slot / dispatch"><bpmn:incoming>Flow_Enqueue_Queue</bpmn:incoming><bpmn:incoming>Flow_Recovery_Queue</bpmn:incoming><bpmn:outgoing>Flow_Queue_Prepare</bpmn:outgoing></bpmn:task>
+<bpmn:task id="Prepare" name="Validate config / isolate worktree"><bpmn:incoming>Flow_Queue_Prepare</bpmn:incoming><bpmn:outgoing>Flow_Prepare_Ready</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="Ready" name="Plan ready?"><bpmn:incoming>Flow_Prepare_Ready</bpmn:incoming><bpmn:outgoing>Flow_Ready_Launch</bpmn:outgoing><bpmn:outgoing>Flow_Ready_Blocked</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Launch" name="Launch detached agent"><bpmn:incoming>Flow_Ready_Launch</bpmn:incoming><bpmn:outgoing>Flow_Launch_Agent</bpmn:outgoing></bpmn:task>
+<bpmn:boundaryEvent id="LaunchFailed" name="Launch failed" attachedToRef="Launch" cancelActivity="true"><bpmn:outgoing>Flow_LaunchFailed_Blocked</bpmn:outgoing><bpmn:errorEventDefinition id="Error_LaunchFailed" /></bpmn:boundaryEvent>
+<bpmn:subProcess id="Agent" name="Contribution workflow (ferb)"><bpmn:incoming>Flow_Launch_Agent</bpmn:incoming><bpmn:incoming>Flow_Resume_Agent</bpmn:incoming><bpmn:outgoing>Flow_Agent_Reconcile</bpmn:outgoing><bpmn:startEvent id="AgentStart" name="Agent running"><bpmn:outgoing>Flow_AgentStart_Phase0</bpmn:outgoing></bpmn:startEvent>
+<bpmn:task id="Phase0" name="Assess issue (Phase 0)"><bpmn:incoming>Flow_AgentStart_Phase0</bpmn:incoming><bpmn:outgoing>Flow_Phase0_Go</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="Go" name="GO?"><bpmn:incoming>Flow_Phase0_Go</bpmn:incoming><bpmn:outgoing>Flow_Go_Analyze</bpmn:outgoing><bpmn:outgoing>Flow_Go_Record</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Analyze" name="Analyze / reproduce"><bpmn:incoming>Flow_Go_Analyze</bpmn:incoming><bpmn:outgoing>Flow_Analyze_Reproduced</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="Reproduced" name="Fix needed?"><bpmn:incoming>Flow_Analyze_Reproduced</bpmn:incoming><bpmn:outgoing>Flow_Reproduced_Fix</bpmn:outgoing><bpmn:outgoing>Flow_Reproduced_Record</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Fix" name="Implement fix"><bpmn:incoming>Flow_Reproduced_Fix</bpmn:incoming><bpmn:incoming>Flow_TestsPass_Fix</bpmn:incoming><bpmn:incoming>Flow_ReviewPass_Fix</bpmn:incoming><bpmn:outgoing>Flow_Fix_Test</bpmn:outgoing></bpmn:task>
+<bpmn:task id="Test" name="Run regression tests"><bpmn:incoming>Flow_Fix_Test</bpmn:incoming><bpmn:outgoing>Flow_Test_TestsPass</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="TestsPass" name="Tests pass?"><bpmn:incoming>Flow_Test_TestsPass</bpmn:incoming><bpmn:outgoing>Flow_TestsPass_Review</bpmn:outgoing><bpmn:outgoing>Flow_TestsPass_Fix</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Review" name="Adversarial review"><bpmn:incoming>Flow_TestsPass_Review</bpmn:incoming><bpmn:outgoing>Flow_Review_ReviewPass</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="ReviewPass" name="Review passes?"><bpmn:incoming>Flow_Review_ReviewPass</bpmn:incoming><bpmn:outgoing>Flow_ReviewPass_Publish</bpmn:outgoing><bpmn:outgoing>Flow_ReviewPass_Fix</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Publish" name="Push fork / open PR / comment"><bpmn:incoming>Flow_ReviewPass_Publish</bpmn:incoming><bpmn:outgoing>Flow_Publish_Record</bpmn:outgoing></bpmn:task>
+<bpmn:task id="Record" name="Write final run record"><bpmn:incoming>Flow_Go_Record</bpmn:incoming><bpmn:incoming>Flow_Reproduced_Record</bpmn:incoming><bpmn:incoming>Flow_Publish_Record</bpmn:incoming><bpmn:outgoing>Flow_Record_AgentEnd</bpmn:outgoing></bpmn:task>
+<bpmn:endEvent id="AgentEnd" name="Record written"><bpmn:incoming>Flow_Record_AgentEnd</bpmn:incoming></bpmn:endEvent><bpmn:sequenceFlow id="Flow_AgentStart_Phase0" sourceRef="AgentStart" targetRef="Phase0" />
+<bpmn:sequenceFlow id="Flow_Phase0_Go" sourceRef="Phase0" targetRef="Go" />
+<bpmn:sequenceFlow id="Flow_Go_Analyze" sourceRef="Go" targetRef="Analyze" name="GO" />
+<bpmn:sequenceFlow id="Flow_Go_Record" sourceRef="Go" targetRef="Record" name="NO-GO / ASK" />
+<bpmn:sequenceFlow id="Flow_Analyze_Reproduced" sourceRef="Analyze" targetRef="Reproduced" />
+<bpmn:sequenceFlow id="Flow_Reproduced_Fix" sourceRef="Reproduced" targetRef="Fix" name="Yes" />
+<bpmn:sequenceFlow id="Flow_Reproduced_Record" sourceRef="Reproduced" targetRef="Record" name="No reproduction / stop" />
+<bpmn:sequenceFlow id="Flow_Fix_Test" sourceRef="Fix" targetRef="Test" />
+<bpmn:sequenceFlow id="Flow_Test_TestsPass" sourceRef="Test" targetRef="TestsPass" />
+<bpmn:sequenceFlow id="Flow_TestsPass_Review" sourceRef="TestsPass" targetRef="Review" name="Pass" />
+<bpmn:sequenceFlow id="Flow_TestsPass_Fix" sourceRef="TestsPass" targetRef="Fix" name="Fail" />
+<bpmn:sequenceFlow id="Flow_Review_ReviewPass" sourceRef="Review" targetRef="ReviewPass" />
+<bpmn:sequenceFlow id="Flow_ReviewPass_Publish" sourceRef="ReviewPass" targetRef="Publish" name="Pass" />
+<bpmn:sequenceFlow id="Flow_ReviewPass_Fix" sourceRef="ReviewPass" targetRef="Fix" name="Changes needed" />
+<bpmn:sequenceFlow id="Flow_Publish_Record" sourceRef="Publish" targetRef="Record" />
+<bpmn:sequenceFlow id="Flow_Record_AgentEnd" sourceRef="Record" targetRef="AgentEnd" /><bpmn:textAnnotation id="Note_Phase0"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Phase0" sourceRef="Phase0" targetRef="Note_Phase0" />
+<bpmn:textAnnotation id="Note_Analyze"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Analyze" sourceRef="Analyze" targetRef="Note_Analyze" />
+<bpmn:textAnnotation id="Note_Fix"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Fix" sourceRef="Fix" targetRef="Note_Fix" />
+<bpmn:textAnnotation id="Note_Test"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Test" sourceRef="Test" targetRef="Note_Test" />
+<bpmn:textAnnotation id="Note_Review"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Review" sourceRef="Review" targetRef="Note_Review" />
+<bpmn:textAnnotation id="Note_Publish"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps. Launch-to-first-PR elapsed (not publishing wait): n=0; unavailable (no valid observations). pull_requests table absent in source.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Publish" sourceRef="Publish" targetRef="Note_Publish" />
+<bpmn:textAnnotation id="Note_Record"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Record" sourceRef="Record" targetRef="Note_Record" /></bpmn:subProcess>
+<bpmn:boundaryEvent id="Interrupted" name="Session vanished / stalled" attachedToRef="Agent" cancelActivity="true"><bpmn:outgoing>Flow_Interrupted_Classify</bpmn:outgoing><bpmn:errorEventDefinition id="Error_Interrupted" /></bpmn:boundaryEvent>
+<bpmn:task id="Reconcile" name="Reconcile record / measure diff"><bpmn:incoming>Flow_Agent_Reconcile</bpmn:incoming><bpmn:outgoing>Flow_Reconcile_Finished</bpmn:outgoing></bpmn:task>
+<bpmn:endEvent id="Finished" name="Reconciled (done / blocked)"><bpmn:incoming>Flow_Reconcile_Finished</bpmn:incoming></bpmn:endEvent>
+<bpmn:endEvent id="Blocked" name="Blocked / failed"><bpmn:incoming>Flow_Ready_Blocked</bpmn:incoming><bpmn:incoming>Flow_LaunchFailed_Blocked</bpmn:incoming><bpmn:incoming>Flow_Recovery_Blocked</bpmn:incoming></bpmn:endEvent>
+<bpmn:task id="Classify" name="Classify interruption"><bpmn:incoming>Flow_Interrupted_Classify</bpmn:incoming><bpmn:outgoing>Flow_Classify_Recovery</bpmn:outgoing></bpmn:task>
+<bpmn:exclusiveGateway id="Recovery" name="Recovery decision"><bpmn:incoming>Flow_Classify_Recovery</bpmn:incoming><bpmn:outgoing>Flow_Recovery_Park</bpmn:outgoing><bpmn:outgoing>Flow_Recovery_Queue</bpmn:outgoing><bpmn:outgoing>Flow_Recovery_Blocked</bpmn:outgoing></bpmn:exclusiveGateway>
+<bpmn:task id="Park" name="Park until reset / WIP available"><bpmn:incoming>Flow_Recovery_Park</bpmn:incoming><bpmn:outgoing>Flow_Park_Resume</bpmn:outgoing></bpmn:task>
+<bpmn:task id="Resume" name="Resume existing session"><bpmn:incoming>Flow_Park_Resume</bpmn:incoming><bpmn:outgoing>Flow_Resume_Agent</bpmn:outgoing></bpmn:task>
+<bpmn:sequenceFlow id="Flow_Issue_Enqueue" sourceRef="Issue" targetRef="Enqueue" />
+<bpmn:sequenceFlow id="Flow_Enqueue_Queue" sourceRef="Enqueue" targetRef="Queue" />
+<bpmn:sequenceFlow id="Flow_Queue_Prepare" sourceRef="Queue" targetRef="Prepare" />
+<bpmn:sequenceFlow id="Flow_Prepare_Ready" sourceRef="Prepare" targetRef="Ready" />
+<bpmn:sequenceFlow id="Flow_Ready_Launch" sourceRef="Ready" targetRef="Launch" name="Ready" />
+<bpmn:sequenceFlow id="Flow_Ready_Blocked" sourceRef="Ready" targetRef="Blocked" name="Missing config / source clone" />
+<bpmn:sequenceFlow id="Flow_LaunchFailed_Blocked" sourceRef="LaunchFailed" targetRef="Blocked" name="Worktree / tmux failure" />
+<bpmn:sequenceFlow id="Flow_Launch_Agent" sourceRef="Launch" targetRef="Agent" />
+<bpmn:sequenceFlow id="Flow_Agent_Reconcile" sourceRef="Agent" targetRef="Reconcile" />
+<bpmn:sequenceFlow id="Flow_Reconcile_Finished" sourceRef="Reconcile" targetRef="Finished" />
+<bpmn:sequenceFlow id="Flow_Interrupted_Classify" sourceRef="Interrupted" targetRef="Classify" />
+<bpmn:sequenceFlow id="Flow_Classify_Recovery" sourceRef="Classify" targetRef="Recovery" />
+<bpmn:sequenceFlow id="Flow_Recovery_Park" sourceRef="Recovery" targetRef="Park" name="Transient / quota window; below cap" />
+<bpmn:sequenceFlow id="Flow_Park_Resume" sourceRef="Park" targetRef="Resume" />
+<bpmn:sequenceFlow id="Flow_Resume_Agent" sourceRef="Resume" targetRef="Agent" />
+<bpmn:sequenceFlow id="Flow_Recovery_Queue" sourceRef="Recovery" targetRef="Queue" name="Died; fresh attempts remain" />
+<bpmn:sequenceFlow id="Flow_Recovery_Blocked" sourceRef="Recovery" targetRef="Blocked" name="Needs human / cap / missing worktree" />
+<bpmn:textAnnotation id="Note_Enqueue"><bpmn:text>Wait: unmeasured. Issue creation/discovery time is not recorded; queued_at marks insertion.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Enqueue" sourceRef="Enqueue" targetRef="Note_Enqueue" />
+<bpmn:textAnnotation id="Note_Queue"><bpmn:text>Queue + dispatch delay: n=4; median=66247 ms; p95=926853 ms; max=926853 ms. jobs.started_at - queued_at; includes preparation and launch. First launch only.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Queue" sourceRef="Queue" targetRef="Note_Queue" />
+<bpmn:textAnnotation id="Note_Prepare"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Prepare" sourceRef="Prepare" targetRef="Note_Prepare" />
+<bpmn:textAnnotation id="Note_Launch"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Launch" sourceRef="Launch" targetRef="Note_Launch" />
+<bpmn:textAnnotation id="Note_Agent"><bpmn:text>Observed run elapsed: n=4; median=129038 ms; p95=581663 ms; max=581663 ms. jobs.ended_at - started_at; terminal first-launch jobs only. Includes work and reconciliation lag; not phase wait time. done does not imply a PR.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Agent" sourceRef="Agent" targetRef="Note_Agent" />
+<bpmn:textAnnotation id="Note_Reconcile"><bpmn:text>Wait: unmeasured. ended_at records observation, not actual agent exit. Lag can include a supervisor tick or longer downtime; diff ceilings can block after publication.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Reconcile" sourceRef="Reconcile" targetRef="Note_Reconcile" />
+<bpmn:textAnnotation id="Note_Classify"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Classify" sourceRef="Classify" targetRef="Note_Classify" />
+<bpmn:textAnnotation id="Note_Park"><bpmn:text>Wait: unmeasured. resume_after is planned eligibility, not measured parked duration. No transition history exists.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Park" sourceRef="Park" targetRef="Note_Park" />
+<bpmn:textAnnotation id="Note_Resume"><bpmn:text>Wait: unmeasured. SQLite has no per-step start/end timestamps.</bpmn:text></bpmn:textAnnotation>
+<bpmn:association id="Assoc_Resume" sourceRef="Resume" targetRef="Note_Resume" />
+</bpmn:process>
+<bpmndi:BPMNDiagram id="IssueToPRDiagram"><bpmndi:BPMNPlane id="IssueToPRPlane" bpmnElement="IssueToPR">
+<bpmndi:BPMNShape id="Shape_Issue" bpmnElement="Issue"><dc:Bounds x="40" y="112" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Enqueue" bpmnElement="Enqueue"><dc:Bounds x="120" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Queue" bpmnElement="Queue"><dc:Bounds x="330" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Prepare" bpmnElement="Prepare"><dc:Bounds x="540" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Ready" bpmnElement="Ready"><dc:Bounds x="750" y="105" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Launch" bpmnElement="Launch"><dc:Bounds x="860" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_LaunchFailed" bpmnElement="LaunchFailed"><dc:Bounds x="984" y="152" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Agent" bpmnElement="Agent" isExpanded="true"><dc:Bounds x="1100" y="40" width="2040" height="550" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_AgentStart" bpmnElement="AgentStart"><dc:Bounds x="1140" y="112" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Phase0" bpmnElement="Phase0"><dc:Bounds x="1220" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Go" bpmnElement="Go"><dc:Bounds x="1430" y="105" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Analyze" bpmnElement="Analyze"><dc:Bounds x="1540" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Reproduced" bpmnElement="Reproduced"><dc:Bounds x="1705" y="105" width="35" height="35" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Fix" bpmnElement="Fix"><dc:Bounds x="1750" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Test" bpmnElement="Test"><dc:Bounds x="1960" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_TestsPass" bpmnElement="TestsPass"><dc:Bounds x="2170" y="105" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Review" bpmnElement="Review"><dc:Bounds x="2280" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_ReviewPass" bpmnElement="ReviewPass"><dc:Bounds x="2490" y="105" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Publish" bpmnElement="Publish"><dc:Bounds x="2600" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Record" bpmnElement="Record"><dc:Bounds x="2810" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_AgentEnd" bpmnElement="AgentEnd"><dc:Bounds x="3020" y="112" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Interrupted" bpmnElement="Interrupted"><dc:Bounds x="3080" y="572" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Reconcile" bpmnElement="Reconcile"><dc:Bounds x="3260" y="90" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Finished" bpmnElement="Finished"><dc:Bounds x="3490" y="112" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Blocked" bpmnElement="Blocked"><dc:Bounds x="750" y="520" width="36" height="36" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Classify" bpmnElement="Classify"><dc:Bounds x="3020" y="840" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Recovery" bpmnElement="Recovery"><dc:Bounds x="2790" y="855" width="50" height="50" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Park" bpmnElement="Park"><dc:Bounds x="2520" y="840" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNShape id="Shape_Resume" bpmnElement="Resume"><dc:Bounds x="2520" y="1150" width="160" height="80" /></bpmndi:BPMNShape>
+<bpmndi:BPMNEdge id="Edge_Flow_Issue_Enqueue" bpmnElement="Flow_Issue_Enqueue"><di:waypoint x="76" y="130" /><di:waypoint x="120" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Enqueue_Queue" bpmnElement="Flow_Enqueue_Queue"><di:waypoint x="280" y="130" /><di:waypoint x="330" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Queue_Prepare" bpmnElement="Flow_Queue_Prepare"><di:waypoint x="490" y="130" /><di:waypoint x="540" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Prepare_Ready" bpmnElement="Flow_Prepare_Ready"><di:waypoint x="700" y="130" /><di:waypoint x="750" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Ready_Launch" bpmnElement="Flow_Ready_Launch"><di:waypoint x="800" y="130" /><di:waypoint x="860" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Ready_Blocked" bpmnElement="Flow_Ready_Blocked"><di:waypoint x="775" y="155" /><di:waypoint x="775" y="470" /><di:waypoint x="768" y="470" /><di:waypoint x="768" y="520" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_LaunchFailed_Blocked" bpmnElement="Flow_LaunchFailed_Blocked"><di:waypoint x="1003" y="188" /><di:waypoint x="1030" y="520" /><di:waypoint x="810" y="520" /><di:waypoint x="786" y="530" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Launch_Agent" bpmnElement="Flow_Launch_Agent"><di:waypoint x="1020" y="143" /><di:waypoint x="1100" y="155" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Agent_Reconcile" bpmnElement="Flow_Agent_Reconcile"><di:waypoint x="3140" y="160" /><di:waypoint x="3260" y="142" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Reconcile_Finished" bpmnElement="Flow_Reconcile_Finished"><di:waypoint x="3420" y="130" /><di:waypoint x="3490" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_AgentStart_Phase0" bpmnElement="Flow_AgentStart_Phase0"><di:waypoint x="1176" y="130" /><di:waypoint x="1220" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Phase0_Go" bpmnElement="Flow_Phase0_Go"><di:waypoint x="1380" y="130" /><di:waypoint x="1430" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Go_Analyze" bpmnElement="Flow_Go_Analyze"><di:waypoint x="1480" y="130" /><di:waypoint x="1540" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Go_Record" bpmnElement="Flow_Go_Record"><di:waypoint x="1455" y="155" /><di:waypoint x="1455" y="480" /><di:waypoint x="2890" y="480" /><di:waypoint x="2890" y="170" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Analyze_Reproduced" bpmnElement="Flow_Analyze_Reproduced"><di:waypoint x="1700" y="124" /><di:waypoint x="1705" y="124" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Reproduced_Fix" bpmnElement="Flow_Reproduced_Fix"><di:waypoint x="1740" y="124" /><di:waypoint x="1750" y="124" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Reproduced_Record" bpmnElement="Flow_Reproduced_Record"><di:waypoint x="1722" y="140" /><di:waypoint x="1722" y="510" /><di:waypoint x="2920" y="510" /><di:waypoint x="2893" y="170" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Fix_Test" bpmnElement="Flow_Fix_Test"><di:waypoint x="1910" y="130" /><di:waypoint x="1960" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Test_TestsPass" bpmnElement="Flow_Test_TestsPass"><di:waypoint x="2120" y="130" /><di:waypoint x="2170" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_TestsPass_Review" bpmnElement="Flow_TestsPass_Review"><di:waypoint x="2220" y="130" /><di:waypoint x="2280" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_TestsPass_Fix" bpmnElement="Flow_TestsPass_Fix"><di:waypoint x="2195" y="155" /><di:waypoint x="2195" y="430" /><di:waypoint x="1830" y="430" /><di:waypoint x="1830" y="170" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Review_ReviewPass" bpmnElement="Flow_Review_ReviewPass"><di:waypoint x="2440" y="130" /><di:waypoint x="2490" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_ReviewPass_Publish" bpmnElement="Flow_ReviewPass_Publish"><di:waypoint x="2540" y="130" /><di:waypoint x="2600" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_ReviewPass_Fix" bpmnElement="Flow_ReviewPass_Fix"><di:waypoint x="2515" y="155" /><di:waypoint x="2515" y="455" /><di:waypoint x="1800" y="455" /><di:waypoint x="1826" y="170" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Publish_Record" bpmnElement="Flow_Publish_Record"><di:waypoint x="2760" y="130" /><di:waypoint x="2810" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Record_AgentEnd" bpmnElement="Flow_Record_AgentEnd"><di:waypoint x="2970" y="130" /><di:waypoint x="3020" y="130" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Interrupted_Classify" bpmnElement="Flow_Interrupted_Classify"><di:waypoint x="3098" y="608" /><di:waypoint x="3098" y="780" /><di:waypoint x="3100" y="780" /><di:waypoint x="3100" y="840" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Classify_Recovery" bpmnElement="Flow_Classify_Recovery"><di:waypoint x="3020" y="880" /><di:waypoint x="2840" y="880" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Recovery_Park" bpmnElement="Flow_Recovery_Park"><di:waypoint x="2790" y="880" /><di:waypoint x="2680" y="880" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Park_Resume" bpmnElement="Flow_Park_Resume"><di:waypoint x="2600" y="920" /><di:waypoint x="2600" y="1100" /><di:waypoint x="2600" y="1150" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Resume_Agent" bpmnElement="Flow_Resume_Agent"><di:waypoint x="2680" y="1190" /><di:waypoint x="3210" y="1190" /><di:waypoint x="3210" y="530" /><di:waypoint x="3140" y="516" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Recovery_Queue" bpmnElement="Flow_Recovery_Queue"><di:waypoint x="2815" y="905" /><di:waypoint x="2815" y="1510" /><di:waypoint x="410" y="1510" /><di:waypoint x="410" y="170" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNEdge id="Edge_Flow_Recovery_Blocked" bpmnElement="Flow_Recovery_Blocked"><di:waypoint x="2815" y="905" /><di:waypoint x="2815" y="1450" /><di:waypoint x="768" y="1450" /><di:waypoint x="768" y="556" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Enqueue" bpmnElement="Note_Enqueue"><dc:Bounds x="120" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Enqueue" bpmnElement="Assoc_Enqueue"><di:waypoint x="200" y="170" /><di:waypoint x="200" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Queue" bpmnElement="Note_Queue"><dc:Bounds x="330" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Queue" bpmnElement="Assoc_Queue"><di:waypoint x="410" y="170" /><di:waypoint x="410" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Prepare" bpmnElement="Note_Prepare"><dc:Bounds x="540" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Prepare" bpmnElement="Assoc_Prepare"><di:waypoint x="620" y="170" /><di:waypoint x="620" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Launch" bpmnElement="Note_Launch"><dc:Bounds x="860" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Launch" bpmnElement="Assoc_Launch"><di:waypoint x="940" y="170" /><di:waypoint x="940" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Agent" bpmnElement="Note_Agent"><dc:Bounds x="1100" y="640" width="700" height="140" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Agent" bpmnElement="Assoc_Agent"><di:waypoint x="2120" y="590" /><di:waypoint x="1180" y="640" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Phase0" bpmnElement="Note_Phase0"><dc:Bounds x="1220" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Phase0" bpmnElement="Assoc_Phase0"><di:waypoint x="1300" y="170" /><di:waypoint x="1300" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Analyze" bpmnElement="Note_Analyze"><dc:Bounds x="1540" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Analyze" bpmnElement="Assoc_Analyze"><di:waypoint x="1620" y="170" /><di:waypoint x="1620" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Fix" bpmnElement="Note_Fix"><dc:Bounds x="1750" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Fix" bpmnElement="Assoc_Fix"><di:waypoint x="1830" y="170" /><di:waypoint x="1830" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Test" bpmnElement="Note_Test"><dc:Bounds x="1960" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Test" bpmnElement="Assoc_Test"><di:waypoint x="2040" y="170" /><di:waypoint x="2040" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Review" bpmnElement="Note_Review"><dc:Bounds x="2280" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Review" bpmnElement="Assoc_Review"><di:waypoint x="2360" y="170" /><di:waypoint x="2360" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Publish" bpmnElement="Note_Publish"><dc:Bounds x="2600" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Publish" bpmnElement="Assoc_Publish"><di:waypoint x="2680" y="170" /><di:waypoint x="2680" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Record" bpmnElement="Note_Record"><dc:Bounds x="2810" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Record" bpmnElement="Assoc_Record"><di:waypoint x="2890" y="170" /><di:waypoint x="2890" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Reconcile" bpmnElement="Note_Reconcile"><dc:Bounds x="3260" y="230" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Reconcile" bpmnElement="Assoc_Reconcile"><di:waypoint x="3340" y="170" /><di:waypoint x="3340" y="230" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Classify" bpmnElement="Note_Classify"><dc:Bounds x="3020" y="980" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Classify" bpmnElement="Assoc_Classify"><di:waypoint x="3100" y="920" /><di:waypoint x="3100" y="980" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Park" bpmnElement="Note_Park"><dc:Bounds x="2520" y="980" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Park" bpmnElement="Assoc_Park"><di:waypoint x="2600" y="920" /><di:waypoint x="2600" y="980" /></bpmndi:BPMNEdge>
+<bpmndi:BPMNShape id="Shape_Note_Resume" bpmnElement="Note_Resume"><dc:Bounds x="2520" y="1290" width="180" height="170" /></bpmndi:BPMNShape><bpmndi:BPMNEdge id="Edge_Assoc_Resume" bpmnElement="Assoc_Resume"><di:waypoint x="2600" y="1230" /><di:waypoint x="2600" y="1290" /></bpmndi:BPMNEdge>
+</bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>
+
