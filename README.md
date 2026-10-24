@@ -117,6 +117,11 @@ is the most useful thing in this repo.
 
 ## Watching it
 
+[Task contracts](docs/task-contracts.md) link acceptance criteria to executable
+checks and retain repair iterations, retry/stop decisions, effort and Git revisions.
+Queue a single issue with `gm add --contract contract.json ...`, then inspect its
+specification and verification history with `gm contract <job-id>`.
+
 The [BPMN 2.0 process model](docs/issue-to-pr.md) documents the issue-to-PR
 workflow and annotates it with measurements from the SQLite job log.
 Regenerate its viewable XML with `bun run process-model --db <fleet.sqlite>`.

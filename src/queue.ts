@@ -4,6 +4,7 @@
 // dispatch, run, or supervise anything. That is a later subtask's job.
 
 import type { Database } from "bun:sqlite";
+import { setContract } from "./contracts.ts";
 
 export type JobState = "queued" | "running" | "done" | "failed" | "blocked";
 
@@ -31,6 +32,7 @@ export interface NewJob {
   task_source: string;
   url?: string | null;
   priority?: number;
+  contract?: unknown;
 }
 
 // Deterministic job_id from repo+issue_number, e.g. "owner__name-42". This is
@@ -83,26 +85,29 @@ export interface AddResult {
 // Insert a job if it doesn't already exist. Returns whether it was newly
 // inserted (false = already present, matching prior job_id).
 export function addJob(db: Database, job: NewJob): AddResult {
-  const id = jobId(job.repo, job.issue_number ?? null);
-  const stmt = db.prepare(`
-    INSERT INTO jobs (
-      job_id, repo, issue_number, title, task_source, url, state, priority, queued_at
-    ) VALUES (
-      $job_id, $repo, $issue_number, $title, $task_source, $url, 'queued', $priority, $queued_at
-    )
-    ON CONFLICT(job_id) DO NOTHING
-  `);
-  const result = stmt.run({
-    $job_id: id,
-    $repo: job.repo,
-    $issue_number: job.issue_number ?? null,
-    $title: job.title ?? null,
-    $task_source: job.task_source,
-    $url: job.url ?? null,
-    $priority: job.priority ?? 0,
-    $queued_at: new Date().toISOString(),
-  });
-  return { job_id: id, inserted: result.changes > 0 };
+  return db.transaction(() => {
+    const id = jobId(job.repo, job.issue_number ?? null);
+    const stmt = db.prepare(`
+      INSERT INTO jobs (
+        job_id, repo, issue_number, title, task_source, url, state, priority, queued_at
+      ) VALUES (
+        $job_id, $repo, $issue_number, $title, $task_source, $url, 'queued', $priority, $queued_at
+      )
+      ON CONFLICT(job_id) DO NOTHING
+    `);
+    const result = stmt.run({
+      $job_id: id,
+      $repo: job.repo,
+      $issue_number: job.issue_number ?? null,
+      $title: job.title ?? null,
+      $task_source: job.task_source,
+      $url: job.url ?? null,
+      $priority: job.priority ?? 0,
+      $queued_at: new Date().toISOString(),
+    });
+    if (job.contract !== undefined) setContract(db, id, job.contract);
+    return { job_id: id, inserted: result.changes > 0 };
+  })();
 }
 
 // List jobs, optionally filtered by state, newest-queued-first within

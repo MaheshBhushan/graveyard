@@ -87,6 +87,20 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
 
+-- Keep specifications and verification history after queue clear/requeue.
+CREATE TABLE IF NOT EXISTS task_contracts (
+  job_id TEXT PRIMARY KEY,
+  specification TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contract_iterations (
+  job_id TEXT NOT NULL REFERENCES task_contracts(job_id),
+  iteration INTEGER NOT NULL,
+  result TEXT NOT NULL,
+  PRIMARY KEY (job_id, iteration)
+);
+
 -- Independent of jobs: clearing/requeueing the work queue must retain outcomes.
 CREATE TABLE IF NOT EXISTS pull_requests (
   repo TEXT NOT NULL,
